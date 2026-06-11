@@ -1,18 +1,19 @@
 import { NestFactory } from '@nestjs/core';
 import { json } from 'express';
 import { AppModule } from './app.module';
-import * as cookieParser from 'cookie-parser';
+import cookieParser from 'cookie-parser';
 import { ValidationPipe, VersioningType } from '@nestjs/common';
-import * as session from 'express-session';
 import { emitGQLSchemaFile } from './gql-schema';
-import * as crypto from 'crypto';
-import * as morgan from 'morgan';
+import morgan from 'morgan';
 import { ConfigService } from '@nestjs/config';
 import { DocumentBuilder, SwaggerModule } from '@nestjs/swagger';
 import { InfraTokenModule } from './infra-token/infra-token.module';
 import { NestExpressApplication } from '@nestjs/platform-express';
 
-function setupSwagger(app, isProduction: boolean) {
+function setupSwagger(
+  app: NestExpressApplication,
+  isProduction: boolean,
+): void {
   const swaggerDocPath = '/api-docs';
 
   const config = new DocumentBuilder()
@@ -47,14 +48,6 @@ async function bootstrap() {
   console.log(`Running in production: ${isProduction}`);
   console.log(`Port: ${configService.get('PORT')}`);
 
-  app.use(
-    session({
-      secret:
-        configService.get('INFRA.SESSION_SECRET') ||
-        crypto.randomBytes(16).toString('hex'),
-    }),
-  );
-
   // Increase file upload limit to 100MB
   app.use(
     json({
@@ -83,6 +76,8 @@ async function bootstrap() {
   app.useGlobalPipes(
     new ValidationPipe({
       transform: true,
+      whitelist: true,
+      forbidNonWhitelisted: true,
     }),
   );
 
@@ -99,8 +94,10 @@ async function bootstrap() {
 
   // Graceful shutdown
   process.on('SIGTERM', async () => {
-    console.info('SIGTERM signal received');
+    console.info('SIGTERM signal received, initiating graceful shutdown...');
     await app.close();
+    console.info('Application closed successfully');
+    process.exit(0);
   });
 }
 

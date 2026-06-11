@@ -128,6 +128,7 @@
     "continue_with_github_enterprise": "Continue with GitHub Enterprise",
     "continue_with_google": "使用 Google 登入",
     "continue_with_microsoft": "使用 Microsoft 登入",
+    "continue_with_oidc": "使用 OIDC 登入",
     "email": "電子信箱地址",
     "logged_out": "登出",
     "login": "登入",
@@ -639,7 +640,7 @@
   "response": {
     "audio": "音訊",
     "body": "回應本體",
-    "filter_response_body": "篩選 JSON 回應本體 (使用 JSONPath 語法)",
+    "filter_response_body": "篩選 JSON 回應本體 (使用 jq 語法)",
     "headers": "回應標頭",
     "html": "HTML",
     "image": "影像",

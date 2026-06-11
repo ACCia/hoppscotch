@@ -1,9 +1,4 @@
 import {
-  runGQLQuery,
-  runGQLSubscription,
-  runMutation,
-} from "@hoppscotch/common/helpers/backend/GQLClient"
-import {
   CreateGqlChildUserCollectionDocument,
   CreateGqlChildUserCollectionMutation,
   CreateGqlChildUserCollectionMutationVariables,
@@ -34,12 +29,6 @@ import {
   ExportUserCollectionsToJsonDocument,
   ExportUserCollectionsToJsonQuery,
   ExportUserCollectionsToJsonQueryVariables,
-  GetGqlRootUserCollectionsDocument,
-  GetGqlRootUserCollectionsQuery,
-  GetGqlRootUserCollectionsQueryVariables,
-  GetUserRootCollectionsDocument,
-  GetUserRootCollectionsQuery,
-  GetUserRootCollectionsQueryVariables,
   ImportUserCollectionsFromJsonDocument,
   ImportUserCollectionsFromJsonMutation,
   ImportUserCollectionsFromJsonMutationVariables,
@@ -53,6 +42,10 @@ import {
   RenameUserCollectionMutation,
   RenameUserCollectionMutationVariables,
   ReqType,
+  SortOptions,
+  SortUserCollectionsDocument,
+  SortUserCollectionsMutation,
+  SortUserCollectionsMutationVariables,
   UpdateGqlUserRequestDocument,
   UpdateGqlUserRequestMutation,
   UpdateGqlUserRequestMutationVariables,
@@ -65,6 +58,7 @@ import {
   UpdateUserCollectionOrderDocument,
   UpdateUserCollectionOrderMutation,
   UpdateUserCollectionOrderMutationVariables,
+  UserChildCollectionSortedDocument,
   UserCollectionCreatedDocument,
   UserCollectionDuplicatedDocument,
   UserCollectionMovedDocument,
@@ -75,7 +69,13 @@ import {
   UserRequestDeletedDocument,
   UserRequestMovedDocument,
   UserRequestUpdatedDocument,
-} from "@api/generated/graphql"
+  UserRootCollectionsSortedDocument,
+} from "@app/api/generated/graphql"
+import {
+  runGQLQuery,
+  runGQLSubscription,
+  runMutation,
+} from "@hoppscotch/common/helpers/backend/GQLClient"
 
 export const createRESTRootUserCollection = (title: string, data?: string) =>
   runMutation<
@@ -213,6 +213,19 @@ export const duplicateUserCollection = (
     reqType,
   })()
 
+export const sortUserCollections = (
+  parentCollectionID: string | null,
+  sortOption: SortOptions
+) =>
+  runMutation<
+    SortUserCollectionsMutation,
+    SortUserCollectionsMutationVariables,
+    ""
+  >(SortUserCollectionsDocument, {
+    parentCollectionID,
+    sortOption,
+  })()
+
 export const editUserRequest = (
   requestID: string,
   title: string,
@@ -281,26 +294,6 @@ export const updateUserCollectionOrder = (
     nextCollectionID,
   })()
 
-export const getUserRootCollections = () =>
-  runGQLQuery<
-    GetUserRootCollectionsQuery,
-    GetUserRootCollectionsQueryVariables,
-    ""
-  >({
-    query: GetUserRootCollectionsDocument,
-    variables: {},
-  })
-
-export const getGQLRootUserCollections = () =>
-  runGQLQuery<
-    GetGqlRootUserCollectionsQuery,
-    GetGqlRootUserCollectionsQueryVariables,
-    ""
-  >({
-    query: GetGqlRootUserCollectionsDocument,
-    variables: {},
-  })
-
 export const exportUserCollectionsToJSON = (
   collectionID?: string,
   collectionType: ReqType.Rest | ReqType.Gql = ReqType.Rest
@@ -350,6 +343,18 @@ export const runUserCollectionOrderUpdatedSubscription = () =>
 export const runUserCollectionDuplicatedSubscription = () =>
   runGQLSubscription({
     query: UserCollectionDuplicatedDocument,
+    variables: {},
+  })
+
+export const runUserRootCollectionsSortedSubscription = () =>
+  runGQLSubscription({
+    query: UserRootCollectionsSortedDocument,
+    variables: {},
+  })
+
+export const runUserChildCollectionSortedSubscription = () =>
+  runGQLSubscription({
+    query: UserChildCollectionSortedDocument,
     variables: {},
   })
 

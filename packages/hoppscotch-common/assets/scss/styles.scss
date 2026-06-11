@@ -22,13 +22,13 @@
 
   @apply selection:bg-accentDark;
   @apply selection:text-accentContrast;
-  @apply overscroll-none;
 }
 
 :root {
-  @apply antialiased;
   accent-color: var(--accent-color);
   font-variant-ligatures: common-ligatures;
+  @apply antialiased;
+  @apply overscroll-none;
 }
 
 ::-webkit-scrollbar-track {
@@ -560,4 +560,20 @@ details[open] summary .indicator {
 
 .gql-operation-highlight {
   @apply opacity-100;
+}
+
+/*
+ * Standardizes interactive tooltip behavior by extending the hover area.
+ * This prevents tooltips from hiding when the cursor moves across small
+ * gaps between the trigger text and the tooltip box.
+ */
+.hopp-tooltip-interactive-wrapper {
+  @apply relative;
+
+  &::before {
+    content: "";
+    @apply absolute;
+    @apply -inset-2;
+    @apply pointer-events-auto;
+  }
 }

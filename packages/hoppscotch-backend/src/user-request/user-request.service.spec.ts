@@ -1,7 +1,7 @@
 import {
   ReqType as DbRequestType,
   UserRequest as DbUserRequest,
-} from '@prisma/client';
+} from 'src/generated/prisma/client';
 import { mockDeep, mockReset } from 'jest-mock-extended';
 import {
   JSON_INVALID,
@@ -51,6 +51,7 @@ const dbUserRequests: DbUserRequest[] = [
     userUid: user.uid,
     title: 'Request 1',
     request: {},
+    mockExamples: {},
     type: DbRequestType.REST,
     createdOn: new Date(),
     updatedOn: new Date(),
@@ -62,6 +63,7 @@ const dbUserRequests: DbUserRequest[] = [
     userUid: user.uid,
     title: 'Request 2',
     request: {},
+    mockExamples: {},
     type: DbRequestType.REST,
     createdOn: new Date(),
     updatedOn: new Date(),
@@ -73,6 +75,7 @@ const dbUserRequests: DbUserRequest[] = [
     userUid: user.uid,
     title: 'Request 3',
     request: {},
+    mockExamples: {},
     type: DbRequestType.REST,
     createdOn: new Date(),
     updatedOn: new Date(),
@@ -84,6 +87,7 @@ const dbUserRequests: DbUserRequest[] = [
     userUid: user.uid,
     title: 'Request 4',
     request: {},
+    mockExamples: {},
     type: DbRequestType.REST,
     createdOn: new Date(),
     updatedOn: new Date(),
@@ -95,6 +99,7 @@ const dbUserRequests: DbUserRequest[] = [
     userUid: user.uid,
     title: 'Request 1',
     request: {},
+    mockExamples: {},
     type: DbRequestType.REST,
     createdOn: new Date(),
     updatedOn: new Date(),
@@ -106,6 +111,7 @@ const dbUserRequests: DbUserRequest[] = [
     userUid: user.uid,
     title: 'Request 2',
     request: {},
+    mockExamples: {},
     type: DbRequestType.REST,
     createdOn: new Date(),
     updatedOn: new Date(),
@@ -117,6 +123,7 @@ const dbUserRequests: DbUserRequest[] = [
     userUid: user.uid,
     title: 'Request 3',
     request: {},
+    mockExamples: {},
     type: DbRequestType.REST,
     createdOn: new Date(),
     updatedOn: new Date(),
@@ -128,6 +135,7 @@ const dbUserRequests: DbUserRequest[] = [
     userUid: user.uid,
     title: 'Request 4',
     request: {},
+    mockExamples: {},
     type: DbRequestType.REST,
     createdOn: new Date(),
     updatedOn: new Date(),
@@ -371,6 +379,7 @@ describe('UserRequestService', () => {
       const id = userRequests[0].id;
       const type = userRequests[0].type;
       const args: UpdateUserRequestArgs = {
+        id,
         title: userRequests[0].title,
         request: userRequests[0].request,
       };
@@ -393,6 +402,7 @@ describe('UserRequestService', () => {
       const id = userRequests[0].id;
       const type = userRequests[0].type;
       const args: UpdateUserRequestArgs = {
+        id,
         title: userRequests[0].title,
         request: userRequests[0].request,
       };
@@ -412,7 +422,7 @@ describe('UserRequestService', () => {
       expect(mockPrisma.userRequest.update).toHaveBeenCalledWith({
         where: { id },
         data: {
-          ...args,
+          title: args.title,
           request: JSON.parse(args.request),
         },
       });
@@ -421,6 +431,7 @@ describe('UserRequestService', () => {
       const id = userRequests[0].id;
       const type = userRequests[0].type;
       const args: UpdateUserRequestArgs = {
+        id,
         title: userRequests[0].title,
         request: userRequests[0].request,
       };
@@ -446,6 +457,7 @@ describe('UserRequestService', () => {
       const id = userRequests[0].id;
       const type = userRequests[0].type;
       const args: UpdateUserRequestArgs = {
+        id,
         title: userRequests[0].title,
         request: userRequests[0].request,
       };
@@ -466,6 +478,7 @@ describe('UserRequestService', () => {
       const id = userRequests[0].id;
       const type = userRequests[0].type;
       const args: UpdateUserRequestArgs = {
+        id,
         title: userRequests[0].title,
         request: 'invalid json',
       };
@@ -841,6 +854,7 @@ describe('UserRequestService', () => {
         destCollID,
         userRequests[0],
         userRequests[1],
+        user,
       );
 
       expect(result).resolves.toEqualRight(true);

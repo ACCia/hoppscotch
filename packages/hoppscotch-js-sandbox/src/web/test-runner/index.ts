@@ -1,20 +1,24 @@
-import { FaradayCage } from "faraday-cage"
 import { ConsoleEntry } from "faraday-cage/modules"
 import * as E from "fp-ts/Either"
 import { cloneDeep } from "lodash-es"
 
-import { defaultModules, pwPostRequestModule } from "~/cage-modules"
-import { preventCyclicObjects } from "~/shared-utils"
+import { defaultModules, postRequestModule } from "~/cage-modules"
 import {
+  HoppFetchHook,
+  RunPostRequestScriptOptions,
   SandboxTestResult,
   TestDescriptor,
   TestResponse,
   TestResult,
 } from "~/types"
+import { acquireCage, resetCage, isInfraError } from "~/utils/cage"
+import { parseScriptForSyntax } from "~/utils/scripting"
+import { preventCyclicObjects } from "~/utils/shared"
 
+import { Cookie, HoppRESTRequest } from "@hoppscotch/data"
 import Worker from "./worker?worker&inline"
 
-const runTestScriptWithWebWorker = (
+const runPostRequestScriptWithWebWorker = (
   testScript: string,
   envs: TestResult["envs"],
   response: TestResponse
@@ -36,11 +40,19 @@ const runTestScriptWithWebWorker = (
   })
 }
 
-const runTestScriptWithFaradayCage = async (
+/**
+ * Runs a post-request/test script on the given cage instance.
+ * Returns the result or "retry" if a bootstrap error triggered a cage reset.
+ */
+const executeTestOnCage = async (
+  cage: Awaited<ReturnType<typeof acquireCage>>,
   testScript: string,
   envs: TestResult["envs"],
-  response: TestResponse
-): Promise<E.Either<string, SandboxTestResult>> => {
+  request: HoppRESTRequest,
+  response: TestResponse,
+  cookies: Cookie[] | null,
+  hoppFetchHook?: HoppFetchHook
+): Promise<E.Either<string, SandboxTestResult> | "retry"> => {
   const testRunStack: TestDescriptor[] = [
     { descriptor: "root", expectResults: [], children: [] },
   ]
@@ -48,57 +60,196 @@ const runTestScriptWithFaradayCage = async (
   let finalEnvs = envs
   let finalTestResults = testRunStack
   const consoleEntries: ConsoleEntry[] = []
+  let finalCookies = cookies
+  const testPromises: Promise<void>[] = []
 
-  const cage = await FaradayCage.create()
+  const captureHook: {
+    capture?: () => void
+    bootstrapError?: unknown
+    scriptExecutionError?: { name: string; message: string; stack: string }
+  } = {}
 
   const result = await cage.runCode(testScript, [
     ...defaultModules({
       handleConsoleEntry: (consoleEntry) => consoleEntries.push(consoleEntry),
+      hoppFetchHook,
     }),
 
-    pwPostRequestModule({
-      envs: cloneDeep(envs),
-      testRunStack: cloneDeep(testRunStack),
-      response,
-      handleSandboxResults: ({ envs, testRunStack }) => {
-        finalEnvs = envs
-        finalTestResults = testRunStack
+    postRequestModule(
+      {
+        envs: cloneDeep(envs),
+        testRunStack: cloneDeep(testRunStack),
+        request: cloneDeep(request),
+        response: cloneDeep(response),
+        cookies: cookies ? cloneDeep(cookies) : null,
+        handleSandboxResults: ({ envs, testRunStack, cookies }) => {
+          finalEnvs = envs
+          finalTestResults = testRunStack
+          finalCookies = cookies
+        },
+        onTestPromise: (promise) => {
+          testPromises.push(promise)
+        },
       },
-    }),
+      captureHook
+    ),
   ])
 
   if (result.type === "error") {
+    const bootstrapFailed = captureHook.bootstrapError !== undefined
+    const errorToAnalyze = bootstrapFailed
+      ? captureHook.bootstrapError
+      : result.err
+
+    if (bootstrapFailed || isInfraError(errorToAnalyze)) {
+      resetCage()
+      return "retry"
+    }
+
     if (
       result.err !== null &&
       typeof result.err === "object" &&
       "message" in result.err
     ) {
-      return E.left(`Script execution failed: ${result.err.message}`)
+      const name =
+        "name" in result.err && typeof result.err.name === "string"
+          ? result.err.name
+          : ""
+      const prefix = name ? `${name}: ` : ""
+      return E.left(`Script execution failed: ${prefix}${result.err.message}`)
     }
 
     return E.left(`Script execution failed: ${String(result.err)}`)
   }
 
-  return E.right(<SandboxTestResult>{
-    tests: finalTestResults[0],
-    envs: finalEnvs,
-    consoleEntries,
-  })
+  // Wait for async test functions before capturing results.
+  if (testPromises.length > 0) {
+    await Promise.all(testPromises)
+  }
+
+  // Check for errors reported via the generated try/catch wrapper.
+  // faraday-cage's keepAlive loop swallows rejected promises and does not
+  // await afterScriptExecutionHooks, so async-boundary errors reach us
+  // only via this synchronous host reporter.
+  if (captureHook.scriptExecutionError) {
+    const { name, message } = captureHook.scriptExecutionError
+    const prefix = name ? `${name}: ` : ""
+    return E.left(`Script execution failed: ${prefix}${message}`)
+  }
+
+  if (captureHook.capture) {
+    captureHook.capture()
+  }
+
+  const safeTestResults = cloneDeep(finalTestResults[0])
+
+  const safeEnvs = cloneDeep(finalEnvs)
+  const safeConsoleEntries = cloneDeep(consoleEntries)
+  const safeCookies = finalCookies ? cloneDeep(finalCookies) : null
+
+  return E.right({
+    tests: safeTestResults,
+    envs: safeEnvs,
+    consoleEntries: safeConsoleEntries,
+    updatedCookies: safeCookies,
+  } satisfies SandboxTestResult)
+}
+
+const runPostRequestScriptWithFaradayCage = async (
+  testScript: string,
+  envs: TestResult["envs"],
+  request: HoppRESTRequest,
+  response: TestResponse,
+  cookies: Cookie[] | null,
+  hoppFetchHook?: HoppFetchHook
+): Promise<E.Either<string, SandboxTestResult>> => {
+  try {
+    const cage = await acquireCage()
+
+    const firstAttempt = await executeTestOnCage(
+      cage,
+      testScript,
+      envs,
+      request,
+      response,
+      cookies,
+      hoppFetchHook
+    )
+
+    if (firstAttempt !== "retry") {
+      return firstAttempt
+    }
+
+    // Bootstrap error detected and cage was reset — retry once on a fresh cage
+    const freshCage = await acquireCage()
+    const retryResult = await executeTestOnCage(
+      freshCage,
+      testScript,
+      envs,
+      request,
+      response,
+      cookies,
+      hoppFetchHook
+    )
+
+    if (retryResult === "retry") {
+      return E.left(
+        "Script execution failed: sandbox initialization error (persistent)"
+      )
+    }
+
+    return retryResult
+  } catch (error) {
+    const name = error instanceof Error && error.name ? `${error.name}: ` : ""
+    const message = error instanceof Error ? error.message : String(error)
+    return E.left(`Script execution failed: ${name}${message}`)
+  }
 }
 
 export const runTestScript = async (
   testScript: string,
-  envs: TestResult["envs"],
-  response: TestResponse,
-  experimentalScriptingSandbox = true
+  options: RunPostRequestScriptOptions
 ): Promise<E.Either<string, SandboxTestResult>> => {
-  const responseObjHandle = preventCyclicObjects<TestResponse>(response)
+  const responseObjHandle = preventCyclicObjects<TestResponse>(options.response)
 
   if (E.isLeft(responseObjHandle)) {
     return E.left(`Response marshalling failed: ${responseObjHandle.left}`)
   }
 
-  return experimentalScriptingSandbox
-    ? runTestScriptWithFaradayCage(testScript, envs, responseObjHandle.right)
-    : runTestScriptWithWebWorker(testScript, envs, responseObjHandle.right)
+  const resolvedResponse = responseObjHandle.right
+
+  const { envs, experimentalScriptingSandbox = true } = options
+
+  // Pre-parse before sandbox spin-up so syntax errors surface as a friendly
+  // host-side message. Each target uses the grammar that matches its eventual
+  // executor: experimental → ESM module (top-level imports + await accepted);
+  // legacy → script mode (top-level imports + await rejected).
+  try {
+    parseScriptForSyntax(
+      testScript,
+      experimentalScriptingSandbox ? "experimental" : "legacy"
+    )
+  } catch (e) {
+    const err = e as Error
+    const reason = `${"name" in err ? (err as any).name : "SyntaxError"}: ${err.message}`
+    return E.left(`Script execution failed: ${reason}`)
+  }
+
+  if (experimentalScriptingSandbox) {
+    const { request, cookies, hoppFetchHook } = options as Extract<
+      RunPostRequestScriptOptions,
+      { experimentalScriptingSandbox: true }
+    >
+
+    return runPostRequestScriptWithFaradayCage(
+      testScript,
+      envs,
+      request,
+      resolvedResponse,
+      cookies,
+      hoppFetchHook
+    )
+  }
+
+  return runPostRequestScriptWithWebWorker(testScript, envs, resolvedResponse)
 }

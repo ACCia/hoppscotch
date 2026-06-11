@@ -6,7 +6,7 @@ import {
   InspectorResult,
 } from ".."
 import { Service } from "dioc"
-import { Ref, markRaw } from "vue"
+import { Ref, markRaw, computed } from "vue"
 import IconPlusCircle from "~icons/lucide/plus-circle"
 import {
   HoppRESTRequest,
@@ -19,14 +19,12 @@ import {
   getSelectedEnvironmentType,
 } from "~/newstore/environments"
 import { invokeAction } from "~/helpers/actions"
-import { computed } from "vue"
 import { useStreamStatic } from "~/composables/stream"
 import { SecretEnvironmentService } from "~/services/secret-environment.service"
 import { RESTTabService } from "~/services/tab/rest"
 import { CurrentValueService } from "~/services/current-environment-value.service"
 import { transformInheritedCollectionVariablesToAggregateEnv } from "~/helpers/utils/inheritedCollectionVarTransformer"
-
-const HOPP_ENVIRONMENT_REGEX = /(<<[a-zA-Z0-9-_]+>>)/g
+import { HOPP_ENVIRONMENT_REGEX } from "~/helpers/environment-regex"
 
 const isENVInString = (str: string) => HOPP_ENVIRONMENT_REGEX.test(str)
 
@@ -110,7 +108,7 @@ export class EnvironmentInspectorService extends Service implements Inspector {
       ...collectionVariables,
       ...this.aggregateEnvsWithValue.value,
     ]
-    const envKeys = environmentVariables.map((e) => e.key)
+    const envKeysSet = new Set(environmentVariables.map((e) => e.key))
 
     // Scan each string for <<VAR>> patterns
     target.forEach((element, index) => {
@@ -131,8 +129,7 @@ export class EnvironmentInspectorService extends Service implements Inspector {
           key: element,
         }
 
-        // If the variable doesn't exist, add an inspection
-        if (!envKeys.includes(formattedExEnv)) {
+        if (!envKeysSet.has(formattedExEnv)) {
           newErrors.push({
             id: `environment-not-found-${newErrors.length}`,
             text: {

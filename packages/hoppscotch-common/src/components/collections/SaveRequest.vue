@@ -154,6 +154,7 @@ import { TeamWorkspace } from "~/services/workspace.service"
 import IconSparkle from "~icons/lucide/sparkles"
 import IconThumbsDown from "~icons/lucide/thumbs-down"
 import IconThumbsUp from "~icons/lucide/thumbs-up"
+import { handleTokenValidation } from "~/helpers/handleTokenValidation"
 
 const t = useI18n()
 const toast = useToast()
@@ -312,6 +313,9 @@ const onSelect = (pickedVal: Picked | null) => {
 }
 
 const saveRequestAs = async () => {
+  const isValidToken = await handleTokenValidation()
+  if (!isValidToken) return
+
   if (!requestName.value) {
     toast.error(`${t("error.empty_req_name")}`)
     return
@@ -354,6 +358,7 @@ const saveRequestAs = async () => {
         folderPath: `${picked.value.collectionIndex}`,
         requestIndex: insertionIndex,
         exampleID: undefined,
+        requestRefID: requestUpdated._ref_id,
       },
     }
 
@@ -388,6 +393,7 @@ const saveRequestAs = async () => {
         originLocation: "user-collection",
         folderPath: picked.value.folderPath,
         requestIndex: insertionIndex,
+        requestRefID: requestUpdated._ref_id,
       },
     }
 

@@ -14,6 +14,7 @@ import DispatchingStore, {
 } from "~/newstore/DispatchingStore"
 import { CurrentValueService } from "~/services/current-environment-value.service"
 import { SecretEnvironmentService } from "~/services/secret-environment.service"
+import { coerceGlobalEnvironment } from "~/helpers/globalEnvShape"
 
 export type SelectedEnvironmentIndex =
   | { type: "NO_ENV_SELECTED" }
@@ -309,8 +310,10 @@ const dispatchers = defineDispatchers({
     }
   },
   setGlobalVariables(_, { entries }: { entries: GlobalEnvironment }) {
+    // Coerce at the wire-into-store boundary — TS dispatchers are erased
+    // at runtime; a malformed value would corrupt `state.globals`.
     return {
-      globals: entries,
+      globals: coerceGlobalEnvironment(entries),
     }
   },
   // eslint-disable-next-line @typescript-eslint/no-unused-vars
@@ -469,8 +472,7 @@ export const aggregateEnvs$: Observable<AggregateEnvironment[]> = combineLatest(
         })
       }
     })
-
-    globalEnv.variables.forEach((variable) => {
+    ;(globalEnv?.variables ?? []).forEach((variable) => {
       const { key, secret } = variable
       const currentValue =
         "currentValue" in variable ? variable.currentValue : ""
@@ -556,12 +558,19 @@ export function getAggregateEnvsWithCurrentValue() {
 
     ...currentEnv.variables.map((x, index) => {
       let currentValue = x.currentValue
+      let initialValue = x.initialValue
       if (x.secret) {
         currentValue =
           secretEnvironmentService.getSecretEnvironmentVariableValue(
             currentEnv.id,
             index
-          ) ?? ""
+          )?.value ?? ""
+
+        initialValue =
+          secretEnvironmentService.getSecretEnvironmentVariableValue(
+            currentEnv.id,
+            index
+          )?.initialValue ?? ""
       }
 
       return <AggregateEnvironment>{
@@ -571,19 +580,28 @@ export function getAggregateEnvsWithCurrentValue() {
             currentEnv.id,
             index
           ) ?? currentValue,
-        initialValue: x.initialValue,
+        // Use the local resolved value — `x.initialValue ?? initialValue`
+        // would pin `""` for stripped secrets and skip the store hydration.
+        initialValue,
         secret: x.secret,
         sourceEnv: currentEnv.name,
       }
     }),
     ...getGlobalVariables().map((x, index) => {
       let currentValue = x.currentValue
+      let initialValue = x.initialValue
       if (x.secret) {
         currentValue =
           secretEnvironmentService.getSecretEnvironmentVariableValue(
             "Global",
             index
-          ) ?? ""
+          )?.value ?? ""
+
+        initialValue =
+          secretEnvironmentService.getSecretEnvironmentVariableValue(
+            "Global",
+            index
+          )?.initialValue ?? ""
       }
       return <AggregateEnvironment>{
         key: x.key,
@@ -592,7 +610,7 @@ export function getAggregateEnvsWithCurrentValue() {
             "Global",
             index
           ) ?? currentValue,
-        initialValue: x.initialValue,
+        initialValue,
         secret: x.secret,
         sourceEnv: "Global",
       }
@@ -621,14 +639,21 @@ export const aggregateEnvsWithCurrentValue$: Observable<
         })
       })
 
-      selectedEnv?.variables.map((x, index) => {
+      selectedEnv?.variables.forEach((x, index) => {
         let currentValue = x.currentValue
+        let initialValue = x.initialValue
         if (x.secret) {
           currentValue =
             secretEnvironmentService.getSecretEnvironmentVariableValue(
               selectedEnv.id,
               index
-            ) ?? ""
+            )?.value ?? ""
+
+          initialValue =
+            secretEnvironmentService.getSecretEnvironmentVariableValue(
+              selectedEnv.id,
+              index
+            )?.initialValue ?? ""
         }
         results.push({
           key: x.key,
@@ -637,20 +662,27 @@ export const aggregateEnvsWithCurrentValue$: Observable<
               selectedEnv.id,
               index
             ) ?? currentValue,
-          initialValue: x.initialValue,
+          // Use the local resolved value — see note on `aggregateEnvs$`.
+          initialValue,
           secret: x.secret,
           sourceEnv: selectedEnv.name,
         })
       })
-
-      globalEnv.variables.map((x, index) => {
+      ;(globalEnv?.variables ?? []).forEach((x, index) => {
         let currentValue = x.currentValue
+        let initialValue = x.initialValue
         if (x.secret) {
           currentValue =
             secretEnvironmentService.getSecretEnvironmentVariableValue(
               "Global",
               index
-            ) ?? ""
+            )?.value ?? ""
+
+          initialValue =
+            secretEnvironmentService.getSecretEnvironmentVariableValue(
+              "Global",
+              index
+            )?.initialValue ?? ""
         }
         results.push({
           key: x.key,
@@ -659,7 +691,7 @@ export const aggregateEnvsWithCurrentValue$: Observable<
               "Global",
               index
             ) ?? currentValue,
-          initialValue: x.initialValue,
+          initialValue,
           secret: x.secret,
           sourceEnv: "Global",
         })
@@ -721,7 +753,11 @@ export function getLegacyGlobalEnvironment(): Environment | null {
 }
 
 export function getGlobalVariables(): GlobalEnvironmentVariable[] {
-  return environmentsStore.value.globals.variables.map(
+  // Defensive `?? []` — the dispatcher normalizes `state.globals` to a
+  // valid wrapper, but if state somehow ended up corrupt (e.g. before
+  // a normalization fix shipped), we'd rather return an empty list than
+  // crash every consumer of this function.
+  return (environmentsStore.value.globals?.variables ?? []).map(
     (env: GlobalEnvironmentVariable) => {
       if (env.key && "currentValue" in env && !("secret" in env)) {
         return {

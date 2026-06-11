@@ -112,6 +112,7 @@
     "continue_with_github_enterprise": "Continue with GitHub Enterprise",
     "continue_with_google": "Продолжить с Google",
     "continue_with_microsoft": "Продолжить с Microsoft",
+    "continue_with_oidc": "Продолжить с OIDC",
     "email": "Электронная почта",
     "logged_out": "Успешно вышли. Будем скучать!",
     "login": "Авторизоваться",
@@ -618,7 +619,7 @@
   "response": {
     "audio": "Аудио",
     "body": "Тело ответа",
-    "filter_response_body": "Отфильтровать ответ в формате JSON (используется синтаксис JSONPath)",
+    "filter_response_body": "Отфильтровать ответ в формате JSON (используется синтаксис jq)",
     "headers": "Заголовки",
     "html": "HTML",
     "image": "Изображение",

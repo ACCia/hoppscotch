@@ -38,6 +38,7 @@ export type AuthEvent =
   | { event: "probable_login"; user: HoppUser } // We have previous login state, but the app is waiting for authentication
   | { event: "login"; user: HoppUser } // We are authenticated
   | { event: "logout" } // No authentication and we have no previous state
+  | { event: "token_refresh"; user: HoppUser } // We have refreshed our tokens and have new ones now
 
 export type GithubSignInResult =
   | { type: "success"; user: HoppUser } // The authentication was a success
@@ -219,6 +220,11 @@ export type AuthPlatformDef = {
    */
   signInUserWithGoogle: () => Promise<void>
   /**
+   * Signs user in with Oidc.
+   * @returns A promise that resolves with the user info when auth is completed
+   */
+  signInUserWithOidc: () => Promise<void>
+  /**
    * Signs user in with Github.
    * @returns A promise that resolves with the auth status, giving an opportunity to link if or handle failures
    */
@@ -275,4 +281,16 @@ export type AuthPlatformDef = {
    * If a value is not given, then the value is assumed to be false.
    */
   isEmailEditable?: boolean
+
+  /** Verifies if the current user's authentication tokens are valid
+   * For self-hosted, this should verify the tokens with the backend
+   * @returns True if tokens are valid, false otherwise
+   */
+  verifyAuthTokens?: () => Promise<boolean>
+
+  /** Refreshes the authentication tokens for the current user
+   * For self-hosted, this should refresh the tokens with the backend
+   * @returns True if tokens were refreshed successfully, false otherwise
+   */
+  refreshAuthToken?: () => Promise<boolean>
 }

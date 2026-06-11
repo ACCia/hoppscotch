@@ -14,44 +14,48 @@
         }"
       >
         <div class="flex">
+          <!-- Unified Switcher (orgs + instances in one dropdown) -->
           <tippy
-            v-if="kernelMode === 'desktop'"
+            v-if="
+              platform.organization?.customOrganizationSwitcherComponent ||
+              platform.instance?.instanceSwitchingEnabled
+            "
             interactive
             trigger="click"
             theme="popover"
-            :on-shown="() => instanceSwitcherRef.focus()"
+            :on-shown="() => switcherRef?.focus()"
+            :on-create="onSwitcherCreate"
           >
-            <div class="flex items-center cursor-pointer">
-              <div class="flex">
-                <span
-                  class="!font-bold uppercase tracking-wide !text-secondaryDark pr-1"
-                >
-                  {{ instanceDisplayName }}
-                </span>
-                <span
-                  v-if="
-                    currentState.status === 'connected' &&
-                    'type' in currentState.instance &&
-                    currentState.instance.type === 'vendored'
-                  "
-                  class="!font-bold uppercase tracking-wide !text-secondaryDark pr-1"
-                >
-                  {{ platform.instance.displayConfig.description }}
-                </span>
-              </div>
-              <IconChevronDown class="h-4 w-4 text-secondaryDark" />
-            </div>
+            <HoppButtonSecondary
+              class="!font-bold uppercase tracking-wide !text-secondaryDark hover:bg-primaryDark focus-visible:bg-primaryDark"
+              :label="t('app.name')"
+              :icon="IconChevronDown"
+              reverse
+            />
             <template #content="{ hide }">
               <div
-                ref="instanceSwitcherRef"
-                class="flex flex-col focus:outline-none min-w-64"
+                ref="switcherRef"
+                class="flex flex-col focus:outline-none min-w-72"
                 tabindex="0"
                 @keyup.escape="hide()"
               >
-                <InstanceSwitcher @close-dropdown="hide()" />
+                <component
+                  :is="
+                    platform.organization?.customOrganizationSwitcherComponent
+                  "
+                  v-if="
+                    platform.organization?.customOrganizationSwitcherComponent
+                  "
+                  @close-dropdown="hide()"
+                />
+                <InstanceSwitcher
+                  v-if="platform.instance?.instanceSwitchingEnabled"
+                  @close-dropdown="hide()"
+                />
               </div>
             </template>
           </tippy>
+
           <HoppButtonSecondary
             v-else
             class="!font-bold uppercase tracking-wide !text-secondaryDark hover:bg-primaryDark focus-visible:bg-primaryDark"
@@ -83,6 +87,8 @@
             :on-shown="() => downloadableLinksRef.focus()"
           >
             <HoppButtonSecondary
+              v-tippy="{ theme: 'tooltip' }"
+              :title="t('app.downloads')"
               :icon="IconDownload"
               class="rounded hover:bg-primaryDark focus-visible:bg-primaryDark"
             />
@@ -203,7 +209,7 @@
                   class="!focus-visible:text-blue-600 !hover:text-blue-600 h-8 rounded border border-blue-600/25 bg-blue-500/10 pr-8 !text-blue-500 hover:border-blue-600/20 hover:bg-blue-600/20 focus-visible:border-blue-600/20 focus-visible:bg-blue-600/20"
                 />
               </HoppSmartSelectWrapper>
-              <template #content="{ hide }">
+              <template #content="{ hide, state }">
                 <div
                   ref="accountActions"
                   class="flex flex-col focus:outline-none"
@@ -211,7 +217,7 @@
                   @keyup.escape="hide()"
                   @click="hide()"
                 >
-                  <WorkspaceSelector />
+                  <WorkspaceSelector :state="state" />
                 </div>
               </template>
             </tippy>
@@ -367,58 +373,49 @@ import { breakpointsTailwind, useBreakpoints, useNetwork } from "@vueuse/core"
 import { useService } from "dioc/vue"
 import * as TE from "fp-ts/TaskEither"
 import { pipe } from "fp-ts/function"
+import type { Instance } from "tippy.js"
 import { computed, onMounted, reactive, ref, watch } from "vue"
+
 import { useToast } from "~/composables/toast"
 import { GetMyTeamsQuery, TeamAccessRole } from "~/helpers/backend/graphql"
 import { deleteTeam as backendDeleteTeam } from "~/helpers/backend/mutations/Team"
 import { platform } from "~/platform"
+import { AdditionalLinksService } from "~/services/additionalLinks.service"
 import {
   BANNER_PRIORITY_LOW,
   BannerContent,
   BannerService,
 } from "~/services/banner.service"
 import { WorkspaceService } from "~/services/workspace.service"
-import { InstanceSwitcherService } from "~/services/instance-switcher.service"
+import IconChevronDown from "~icons/lucide/chevron-down"
 import IconDownload from "~icons/lucide/download"
+import IconLayoutDashboard from "~icons/lucide/layout-dashboard"
 import IconLifeBuoy from "~icons/lucide/life-buoy"
 import IconSettings from "~icons/lucide/settings"
 import IconUploadCloud from "~icons/lucide/upload-cloud"
 import IconUser from "~icons/lucide/user"
 import IconUserPlus from "~icons/lucide/user-plus"
 import IconUsers from "~icons/lucide/users"
-import IconChevronDown from "~icons/lucide/chevron-down"
-import IconLayoutDashboard from "~icons/lucide/layout-dashboard"
-import { AdditionalLinksService } from "~/services/additionalLinks.service"
 
 const t = useI18n()
 const toast = useToast()
 const kernelMode = getKernelMode()
-const instanceSwitcherService =
-  kernelMode === "desktop" ? useService(InstanceSwitcherService) : null
-const instanceSwitcherRef =
-  kernelMode === "desktop" ? ref<any | null>(null) : ref(null)
+
+const headerRef = ref<HTMLElement | null>(null)
 const downloadableLinksRef =
   kernelMode === "web" ? ref<any | null>(null) : ref(null)
+const switcherRef = ref<HTMLElement | null>(null)
+
+// Reserve scrollbar gutter so content width doesn't shift when the list
+// grows long enough to scroll inside the popover's `max-h-[45vh]` container.
+const onSwitcherCreate = (instance: Instance) => {
+  const content = instance.popper?.querySelector(".tippy-content")
+  if (content instanceof HTMLElement) {
+    content.style.scrollbarGutter = "stable"
+  }
+}
 
 const isUserAdmin = ref(false)
-
-const currentState =
-  kernelMode === "desktop" && instanceSwitcherService
-    ? useReadonlyStream(
-        instanceSwitcherService.getStateStream(),
-        instanceSwitcherService.getCurrentState().value
-      )
-    : ref({
-        status: "disconnected",
-        instance: { displayName: "Hoppscotch" },
-      })
-
-const instanceDisplayName = computed(() => {
-  if (currentState.value.status !== "connected") {
-    return "Hoppscotch"
-  }
-  return currentState.value.instance.displayName
-})
 
 /**
  * Feature flag to enable the workspace selector login conversion
@@ -428,7 +425,7 @@ const workspaceSelectorFlagEnabled = computed(
 )
 
 /**
- * Show the dashboard link if the user is not on the default cloud instance and is an admin
+ * Show the dashboard link if the user is not on the default cloud instance and is an Admin
  */
 onMounted(async () => {
   const { organization } = platform

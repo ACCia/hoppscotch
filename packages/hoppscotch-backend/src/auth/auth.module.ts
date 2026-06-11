@@ -9,6 +9,7 @@ import { RTJwtStrategy } from './strategies/rt-jwt.strategy';
 import { GoogleStrategy } from './strategies/google.strategy';
 import { GithubStrategy } from './strategies/github.strategy';
 import { MicrosoftStrategy } from './strategies/microsoft.strategy';
+import { OidcStrategy } from './strategies/oidc.strategy';
 import { AuthProvider, authProviderCheck } from './helper';
 import { ConfigService } from '@nestjs/config';
 import {
@@ -34,6 +35,10 @@ import { InfraConfigModule } from 'src/infra-config/infra-config.module';
 })
 export class AuthModule {
   static async register() {
+    if (process.env.GENERATE_GQL_SCHEMA === 'true') {
+      return { module: AuthModule };
+    }
+
     const isInfraConfigPopulated = await isInfraConfigTablePopulated();
     if (!isInfraConfigPopulated) {
       return { module: AuthModule };
@@ -51,6 +56,9 @@ export class AuthModule {
         : []),
       ...(authProviderCheck(AuthProvider.MICROSOFT, allowedAuthProviders)
         ? [MicrosoftStrategy]
+        : []),
+      ...(authProviderCheck(AuthProvider.OIDC, allowedAuthProviders)
+        ? [OidcStrategy]
         : []),
     ];
 
