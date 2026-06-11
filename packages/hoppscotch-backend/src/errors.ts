@@ -34,7 +34,8 @@ export const JSON_INVALID = 'json_invalid' as const;
  * Auth Provider not specified
  * (Auth)
  */
-export const AUTH_PROVIDER_NOT_SPECIFIED = 'auth/provider_not_specified' as const;
+export const AUTH_PROVIDER_NOT_SPECIFIED =
+  'auth/provider_not_specified' as const;
 
 /**
  * Email not provided by OAuth provider
@@ -462,6 +463,12 @@ export const USER_ENVIRONMENT_UPDATE_FAILED =
   'user_environment/user_env_update_failed' as const;
 
 /**
+ * User environment not found for the user
+ * (UserEnvironmentsService)
+ */
+export const USER_ENVIRONMENT_NOT_FOUND = 'user_environment/not_found' as const;
+
+/**
  * User environment invalid environment name
  * (UserEnvironmentsService)
  */
@@ -783,6 +790,18 @@ export const INFRA_CONFIG_OPERATION_NOT_ALLOWED =
   'infra_config/operation_not_allowed';
 
 /**
+ * Error message for when the onboarding status fetch fails
+ * (InfraConfigService)
+ */
+export const INFRA_CONFIG_FETCH_FAILED = 'infra_config/fetch_failed' as const;
+
+/**
+ * Onboarding has already been completed and cannot be re-run
+ * (OnboardingController)
+ */
+export const ONBOARDING_CANNOT_BE_RERUN = 'onboarding/cannot_be_rerun' as const;
+
+/**
  * Error message for when the database table does not exist
  * (InfraConfigService)
  */
@@ -892,6 +911,13 @@ export const MOCK_SERVER_NOT_FOUND = 'mock_server/not_found';
 export const MOCK_SERVER_INVALID_COLLECTION = 'mock_server/invalid_collection';
 
 /**
+ * Mock server collection creation failed
+ * (MockServerService)
+ */
+export const MOCK_SERVER_COLLECTION_CREATION_FAILED =
+  'mock_server/collection_creation_failed';
+
+/**
  * Mock server already exists for this collection
  * (MockServerService)
  */
@@ -927,3 +953,41 @@ export const MOCK_SERVER_LOG_NOT_FOUND = 'mock_server/log_not_found';
  */
 export const MOCK_SERVER_LOG_DELETION_FAILED =
   'mock_server/log_deletion_failed';
+
+/**
+ * Published Docs invalid collection
+ * (PublishedDocsService)
+ */
+export const PUBLISHED_DOCS_INVALID_COLLECTION =
+  'published_docs/invalid_collection';
+
+/**
+ * Published Docs creation failed
+ * (PublishedDocsService)
+ */
+export const PUBLISHED_DOCS_CREATION_FAILED = 'published_docs/creation_failed';
+
+/**
+ * Published Docs update failed
+ * (PublishedDocsService)
+ */
+export const PUBLISHED_DOCS_UPDATE_FAILED = 'published_docs/update_failed';
+
+/**
+ * Published Docs deletion failed
+ * (PublishedDocsService)
+ */
+export const PUBLISHED_DOCS_DELETION_FAILED = 'published_docs/deletion_failed';
+
+/**
+ * Published Docs invalid environment
+ * (PublishedDocsService)
+ */
+export const PUBLISHED_DOCS_FORBIDDEN_ENVIRONMENT_ACCESS =
+  'published_docs/forbidden_environment_access';
+
+/**
+ * Published Docs not found
+ * (PublishedDocsService)
+ */
+export const PUBLISHED_DOCS_NOT_FOUND = 'published_docs/not_found';

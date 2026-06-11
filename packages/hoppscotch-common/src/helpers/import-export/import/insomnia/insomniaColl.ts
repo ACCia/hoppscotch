@@ -228,6 +228,7 @@ const getHoppRequest = (req: InsomniaRequestResource): HoppRESTRequest =>
 
     //insomnia doesn't have saved response
     responses: {},
+    description: req.meta?.description ?? null,
   })
 
 const getHoppFolder = (
@@ -243,6 +244,9 @@ const getHoppFolder = (
     auth: { authType: "inherit", authActive: true },
     headers: [],
     variables: getCollectionVariables(undefined, folderRes), // undefined is used to indicate no environment variables for v4 and below
+    description: folderRes.meta?.description ?? null,
+    preRequestScript: "",
+    testScript: "",
   })
 
 const getHoppCollections = (docs: InsomniaDoc[]) => {
@@ -280,6 +284,9 @@ const getParsedHoppFolder = (
     auth: { authType: "inherit", authActive: true },
     headers: [],
     variables: getCollectionVariables(collection.environment),
+    description: collection.meta.description ?? null,
+    preRequestScript: "",
+    testScript: "",
   })
 }
 
@@ -300,6 +307,8 @@ const getParsedHoppRequest = (req: InsomniaRequestResource) => {
 
     //insomnia doesn't have saved response
     responses: {},
+
+    description: req.meta?.description ?? null,
   })
 }
 
@@ -317,6 +326,9 @@ const getParsedHoppCollections = (docs: InsomniaDocV5[]): HoppCollection[] =>
         auth: { authType: "inherit", authActive: true },
         headers: [],
         variables: getCollectionVariables(doc.environments?.data),
+        description: doc.meta.description ?? null,
+        preRequestScript: "",
+        testScript: "",
       })
     }
 

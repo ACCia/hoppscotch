@@ -23,7 +23,7 @@ import {
 import { KernelInterceptorAgentStore } from "./store"
 import SettingsAgent from "~/components/settings/Agent.vue"
 import SettingsAgentSubtitle from "~/components/settings/AgentSubtitle.vue"
-import InterceptorsErrorPlaceholder from "~/components/interceptors/ErrorPlaceholder.vue"
+import InterceptorsErrorPlaceholder from "~/components/settings/InterceptorErrorPlaceholder.vue"
 import { CookieJarService } from "~/services/cookie-jar.service"
 
 export class AgentKernelInterceptorService
@@ -186,9 +186,30 @@ export class AgentKernelInterceptorService
         decryptedResponse.body.body,
         decryptedResponse.body.mediaType
       )
+
+      // Process Set-Cookie headers for multiHeaders support
+      const multiHeaders: Array<{ key: string; value: string }> = []
+      if (decryptedResponse.headers) {
+        for (const [key, value] of Object.entries(decryptedResponse.headers)) {
+          if (key.toLowerCase() === "set-cookie") {
+            // Split concatenated Set-Cookie headers
+            const cookieStrings = value
+              .split("\n")
+              .map((s) => s.trim())
+              .filter(Boolean)
+            for (const cookieString of cookieStrings) {
+              multiHeaders.push({ key: "Set-Cookie", value: cookieString })
+            }
+          } else {
+            multiHeaders.push({ key, value })
+          }
+        }
+      }
+
       const transformedResponse = {
         ...decryptedResponse,
         body: { ...transformedBody },
+        multiHeaders: multiHeaders.length > 0 ? multiHeaders : undefined,
       }
 
       return E.right(transformedResponse)

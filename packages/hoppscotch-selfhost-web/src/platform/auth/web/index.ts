@@ -33,6 +33,10 @@ async function signInUserWithGoogleFB() {
   window.location.href = `${import.meta.env.VITE_BACKEND_API_URL}/auth/google`
 }
 
+async function signInUserWithOidcFB() {
+  window.location.href = `${import.meta.env.VITE_BACKEND_API_URL}/auth/oidc`
+}
+
 async function signInUserWithMicrosoftFB() {
   window.location.href = `${
     import.meta.env.VITE_BACKEND_API_URL
@@ -167,7 +171,7 @@ async function refreshToken() {
     }
 
     return isSuccessful
-  } catch (error) {
+  } catch (_error) {
     return false
   }
 }
@@ -289,6 +293,9 @@ export const def: AuthPlatformDef = {
   async signInUserWithGoogle() {
     await signInUserWithGoogleFB()
   },
+  async signInUserWithOidc() {
+    await signInUserWithOidcFB()
+  },
   async signInUserWithGithub() {
     await signInUserWithGithubFB()
     return undefined
@@ -339,8 +346,6 @@ export const def: AuthPlatformDef = {
   },
 
   async signOutUser() {
-    // if (!currentUser$.value) throw new Error("No user has logged in")
-
     await logout()
 
     probableUser$.next(null)
@@ -394,7 +399,7 @@ export const def: AuthPlatformDef = {
 
       // axios automatically throws on error status codes, so if we reach here, it was successful
       return !!response.data.isValid
-    } catch (error) {
+    } catch (_error) {
       return false
     }
   },

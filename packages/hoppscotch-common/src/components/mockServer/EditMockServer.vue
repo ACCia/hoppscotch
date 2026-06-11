@@ -118,7 +118,15 @@
             </span>
           </div>
           <div v-if="!isPublic" class="text-xs text-secondaryLight">
-            {{ t("mock_server.private_access_hint") }}
+            {{ t("mock_server.private_access_instruction") }}
+            <HoppSmartAnchor
+              class="link"
+              to="/profile/tokens"
+              blank
+              :icon="IconExternalLink"
+              :label="t('mock_server.create_token_here')"
+              reverse
+            />
           </div>
         </div>
       </div>
@@ -161,9 +169,9 @@ import { pipe } from "fp-ts/function"
 import * as TE from "fp-ts/TaskEither"
 import { ref, watch } from "vue"
 import { useToast } from "~/composables/toast"
-import { updateMockServer as updateMockServerMutation } from "~/helpers/backend/mutations/MockServer"
+import { platform } from "~/platform"
 import { copyToClipboard } from "~/helpers/utils/clipboard"
-import type { MockServer } from "~/newstore/mockServers"
+import type { MockServer } from "~/helpers/backend/types/MockServer"
 import { updateMockServer as updateMockServerInStore } from "~/newstore/mockServers"
 
 // Icons
@@ -171,6 +179,7 @@ import IconCheck from "~icons/lucide/check"
 import IconCopy from "~icons/lucide/copy"
 import IconPlay from "~icons/lucide/play"
 import IconSquare from "~icons/lucide/square"
+import IconExternalLink from "~icons/lucide/external-link"
 
 interface Props {
   show: boolean
@@ -219,7 +228,7 @@ const updateMockServer = async () => {
   }
 
   await pipe(
-    updateMockServerMutation(props.mockServer.id, payload),
+    platform.backend.updateMockServer(props.mockServer.id, payload),
     TE.match(
       () => {
         toast.error(t("error.something_went_wrong"))
@@ -250,7 +259,9 @@ const toggleMockServer = async () => {
   const newActiveState = !isActive.value
 
   await pipe(
-    updateMockServerMutation(props.mockServer.id, { isActive: newActiveState }),
+    platform.backend.updateMockServer(props.mockServer.id, {
+      isActive: newActiveState,
+    }),
     TE.match(
       () => {
         toast.error(t("error.something_went_wrong"))
@@ -285,7 +296,7 @@ const copyToClipboardHandler = async (text: string) => {
     setTimeout(() => {
       copyIcon.value = IconCopy
     }, 1000)
-  } catch (error) {
+  } catch (_error) {
     toast.error(t("error.copy_failed"))
   }
 }

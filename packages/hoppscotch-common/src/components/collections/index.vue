@@ -53,6 +53,8 @@
         displayModalImportExport(true, 'my-collections')
       "
       @duplicate-collection="duplicateCollection"
+      @open-documentation="openDocumentation"
+      @open-request-documentation="openRequestDocumentation"
       @duplicate-request="duplicateRequest"
       @duplicate-response="duplicateResponse"
       @edit-properties="editProperties"
@@ -63,6 +65,7 @@
       @remove-request="removeRequest"
       @remove-response="removeResponse"
       @share-request="shareRequest"
+      @add-example="addExample"
       @select="selectPicked"
       @select-response="selectResponse"
       @select-request="selectRequest"
@@ -105,6 +108,8 @@
       @edit-request="editRequest"
       @edit-response="editResponse"
       @edit-properties="editProperties"
+      @open-documentation="openDocumentation"
+      @open-request-documentation="openRequestDocumentation"
       @create-mock-server="createTeamMockServer"
       @export-data="exportData"
       @expand-team-collection="expandTeamCollection"
@@ -112,6 +117,7 @@
       @remove-folder="removeFolder"
       @remove-request="removeRequest"
       @remove-response="removeResponse"
+      @add-example="addExample"
       @run-collection="
         runCollectionHandler({
           type: 'team-collections',
@@ -183,6 +189,49 @@
       @submit="updateEditingResponse"
       @hide-modal="displayModalEditResponse(false)"
     />
+    <HoppSmartModal
+      v-if="showAddExampleModal"
+      dialog
+      :title="t('action.add_example')"
+      @close="displayModalAddExample(false)"
+    >
+      <template #body>
+        <div class="flex gap-1">
+          <HoppSmartInput
+            v-model="editingResponseName"
+            class="flex-grow"
+            placeholder=" "
+            :label="t('action.label')"
+            input-styles="floating-input !border-0"
+            styles="border border-divider rounded"
+            @submit="onAddExample"
+          />
+        </div>
+      </template>
+      <template #footer>
+        <span class="flex space-x-2">
+          <HoppButtonPrimary
+            :label="t('action.add')"
+            :loading="modalLoadingState"
+            outline
+            @click="onAddExample"
+          />
+          <HoppButtonSecondary
+            :label="t('action.cancel')"
+            outline
+            filled
+            @click="displayModalAddExample(false)"
+          />
+        </span>
+      </template>
+    </HoppSmartModal>
+    <CollectionsExportFormatModal
+      :show="showExportModal"
+      :loading="exportLoading"
+      @close="closeExportModal"
+      @export-hoppscotch="onExportHopp"
+      @export-openapi="onExportOpenAPI"
+    />
     <HoppSmartConfirmModal
       :show="showConfirmModal"
       :title="confirmModalTitle"
@@ -209,11 +258,32 @@
         collectionsType.type === 'team-collections' && hasTeamWriteAccess
       "
       :has-team-write-access="
-        collectionsType.type === 'team-collections' ? hasTeamWriteAccess : true
+        hasTeamWriteAccess || collectionsType.type === 'my-collections'
       "
       source="REST"
       @hide-modal="displayModalEditProperties(false)"
       @set-collection-properties="setCollectionProperties"
+    />
+    <CollectionsDocumentation
+      v-if="showModalDocumentation"
+      :show="showModalDocumentation"
+      :path-or-i-d="editingCollectionPath"
+      :collection="editingCollection"
+      :collection-i-d="editingCollectionID ?? undefined"
+      :folder-path="editingFolderPath"
+      :request-index="editingRequestIndex"
+      :request-i-d="editingRequestID"
+      :request="editingRequest"
+      :is-team-collection="editingCollectionIsTeam"
+      :team-i-d="
+        collectionsType.type === 'team-collections'
+          ? collectionsType.selectedTeam?.teamID
+          : undefined
+      "
+      :has-team-write-access="
+        hasTeamWriteAccess || collectionsType.type === 'my-collections'
+      "
+      @hide-modal="displayModalDocumentation(false)"
     />
 
     <!-- `selectedCollectionID` is guaranteed to be a string when `showCollectionsRunnerModal` is `true` -->
@@ -223,7 +293,7 @@
       @hide-modal="showCollectionsRunnerModal = false"
     />
 
-    <MockServerCreateMockServer />
+    <MockServerConfigureMockServerModal />
   </div>
 </template>
 
@@ -231,29 +301,36 @@
 import { useI18n } from "@composables/i18n"
 import { useToast } from "@composables/toast"
 import {
+  generateUniqueRefId,
   getDefaultRESTRequest,
   HoppCollection,
   HoppRESTAuth,
   HoppRESTHeaders,
   HoppRESTRequest,
+  HoppRESTRequestResponse,
   makeCollection,
+  makeHoppRESTResponseOriginalRequest,
 } from "@hoppscotch/data"
 import { useService } from "dioc/vue"
+import { stripJsonSerializedModulePrefix } from "@hoppscotch/js-sandbox/scripting"
 
 import * as TE from "fp-ts/TaskEither"
+import * as E from "fp-ts/Either"
 import { pipe } from "fp-ts/function"
 import * as A from "fp-ts/Array"
 import * as O from "fp-ts/Option"
 import { flow } from "fp-ts/function"
 
+import yaml from "js-yaml"
 import { cloneDeep, debounce, isEqual } from "lodash-es"
 import { PropType, computed, nextTick, onMounted, ref, watch } from "vue"
 import { useReadonlyStream } from "~/composables/stream"
 import { defineActionHandler, invokeAction } from "~/helpers/actions"
-import { GQLError } from "~/helpers/backend/GQLClient"
+import { GQLError, runMutation } from "~/helpers/backend/GQLClient"
+import { UpdateRequestDocument } from "~/helpers/backend/graphql"
 import {
-  getCompleteCollectionTree,
-  teamCollToHoppRESTColl,
+  CollectionDataProps,
+  getTeamCollectionObject,
 } from "~/helpers/backend/helpers"
 import { handleTokenValidation } from "~/helpers/handleTokenValidation"
 import {
@@ -285,6 +362,8 @@ import {
   resolveSaveContextOnRequestReorder,
 } from "~/helpers/collection/request"
 import { TeamCollection } from "~/helpers/teams/TeamCollection"
+import { stripRefIdReplacer } from "~/helpers/import-export/export"
+import { hoppCollectionToOpenAPI } from "~/helpers/import-export/export/openapi"
 import TeamEnvironmentAdapter from "~/helpers/teams/TeamEnvironmentAdapter"
 import { TeamSearchService } from "~/helpers/teams/TeamsSearch.service"
 import { HoppInheritedProperty } from "~/helpers/types/HoppInheritedProperties"
@@ -329,6 +408,12 @@ import { CurrentValueService } from "~/services/current-environment-value.servic
 import { TeamCollectionsService } from "~/services/team-collection.service"
 import { SortOptions } from "~/helpers/backend/graphql"
 import { CurrentSortValuesService } from "~/services/current-sort.service"
+import {
+  flushLocalStoresForCollectionTree,
+  flushLocalStoresForTeamCollectionTree,
+  stripCollectionTreeForStore,
+  stripSecretVariableValuesForWire,
+} from "~/helpers/secretVariables"
 
 const t = useI18n()
 const toast = useToast()
@@ -367,19 +452,29 @@ const collectionsType = ref<CollectionType>({
 
 // Collection Data
 const editingCollection = ref<HoppCollection | TeamCollection | null>(null)
+const editingCollectionIsTeam = ref<boolean>(false)
 const editingCollectionName = ref<string | null>(null)
 const editingCollectionIndex = ref<number | null>(null)
 const editingCollectionID = ref<string | null>(null)
+const editingCollectionPath = ref<string | null>(null)
+
 const editingFolder = ref<HoppCollection | TeamCollection | null>(null)
 const editingFolderName = ref<string | null>(null)
 const editingFolderPath = ref<string | null>(null)
+
 const editingRequest = ref<HoppRESTRequest | null>(null)
 const editingRequestName = ref("")
 const editingResponseName = ref("")
 const editingResponseOldName = ref("")
 const editingRequestIndex = ref<number | null>(null)
 const editingRequestID = ref<string | null>(null)
+
 const editingResponseID = ref<string | null>(null)
+const showAddExampleModal = ref(false)
+// The queued collection is held here so async export work can read it after
+// the modal closes.
+const showExportModal = ref(false)
+const exportTargetCollection = ref<HoppCollection | TeamCollection | null>(null)
 
 const editingProperties = ref<EditingProperties>({
   collection: null,
@@ -718,6 +813,7 @@ const showModalEditRequest = ref(false)
 const showModalEditResponse = ref(false)
 const showModalImportExport = ref(false)
 const showModalEditProperties = ref(false)
+const showModalDocumentation = ref(false)
 const showConfirmModal = ref(false)
 const showTeamModalAdd = ref(false)
 
@@ -797,6 +893,50 @@ const displayTeamModalAdd = (show: boolean) => {
   teamListAdapter.fetchList()
 }
 
+const displayModalDocumentation = (show: boolean) => {
+  showModalDocumentation.value = show
+
+  if (!show) resetSelectedData()
+}
+
+const displayModalAddExample = (show: boolean) => {
+  showAddExampleModal.value = show
+
+  if (!show) resetSelectedData()
+}
+
+let exportGeneration = 0
+
+const closeExportModal = () => {
+  // Bump so any in-flight export's `finally` no-ops instead of closing a
+  // freshly-opened modal after this dismissal.
+  exportGeneration++
+  showExportModal.value = false
+  exportTargetCollection.value = null
+  exportLoading.value = false
+}
+
+const onExportHopp = async () => {
+  const collection = exportTargetCollection.value
+  if (!collection) return
+  // `doExportHoppCollection` sets `exportLoading = true` on entry; the reset
+  // is owned here via the generation-guarded `closeExportModal()` so a stale
+  // in-flight export cannot re-enable buttons on a freshly-opened modal.
+  // Same `exportGeneration` pattern as `doExportOpenAPI`.
+  const thisGeneration = ++exportGeneration
+  try {
+    await doExportHoppCollection(collection)
+  } finally {
+    if (thisGeneration === exportGeneration) closeExportModal()
+  }
+}
+
+const onExportOpenAPI = (format: "json" | "yaml") => {
+  // Modal stays open through the export to keep the loading state visible;
+  // doExportOpenAPI closes it when finished.
+  doExportOpenAPI(format)
+}
+
 const addNewRootCollection = async (name: string) => {
   if (collectionsType.value.type === "my-collections") {
     modalLoadingState.value = true
@@ -816,6 +956,9 @@ const addNewRootCollection = async (name: string) => {
           authActive: true,
         },
         variables: [],
+        description: "",
+        preRequestScript: "",
+        testScript: "",
       })
     )
 
@@ -959,6 +1102,13 @@ const addFolder = (payload: {
   path: string
   folder: HoppCollection | TeamCollection
 }) => {
+  if (
+    collectionsType.value.type === "team-collections" &&
+    !hasTeamWriteAccess.value
+  ) {
+    return
+  }
+
   const { path, folder } = payload
   editingFolder.value = folder
   editingFolderPath.value = path
@@ -1474,8 +1624,10 @@ const duplicateRequest = async (payload: {
   const { folderPath, request } = payload
   if (!folderPath) return
 
+  const { id: _, ...requestWithoutID } = request
   const newRequest = {
-    ...cloneDeep(request),
+    ...cloneDeep(requestWithoutID),
+    _ref_id: generateUniqueRefId("req"),
     name: `${request.name} - ${t("action.duplicate")}`,
   }
 
@@ -1601,6 +1753,225 @@ const duplicateResponse = async (payload: ResponseConfigPayload) => {
   }
 }
 
+const addExample = (payload: {
+  folderPath: string
+  request: HoppRESTRequest
+  requestIndex: string | number
+}) => {
+  const { folderPath, request, requestIndex } = payload
+
+  // Defensive check to ensure request is valid
+  if (!request || typeof request !== "object") {
+    console.error("Invalid request object:", request)
+    toast.error(t("error.invalid_request"))
+    return
+  }
+
+  // Additional validation for required request properties
+  if (!request.name && !request.endpoint) {
+    console.error("Request missing required properties:", request)
+    toast.error(t("error.invalid_request"))
+    return
+  }
+
+  editingRequest.value = request
+  editingRequestName.value = request.name ?? ""
+  editingResponseName.value = ""
+  editingResponseOldName.value = ""
+
+  if (collectionsType.value.type === "my-collections" && folderPath) {
+    editingFolderPath.value = folderPath
+    editingRequestIndex.value = parseInt(requestIndex.toString())
+  } else {
+    editingRequestID.value = requestIndex.toString()
+  }
+  displayModalAddExample(true)
+}
+
+const onAddExample = async () => {
+  const exampleName = editingResponseName.value.trim()
+
+  if (!exampleName) {
+    toast.error(t("response.invalid_name"))
+    return
+  }
+
+  const request = editingRequest.value
+  if (!request || !request.name) {
+    toast.error(t("error.invalid_request"))
+    return
+  }
+
+  // Check if example name already exists
+  if (request.responses && request.responses[exampleName]) {
+    toast.error(t("response.duplicate_name_error"))
+    return
+  }
+
+  // Create the original request from the parent request
+  const originalRequest = makeHoppRESTResponseOriginalRequest({
+    name: request.name,
+    method: request.method,
+    endpoint: request.endpoint,
+    headers: request.headers,
+    params: request.params,
+    body: request.body,
+    auth: request.auth,
+    requestVariables: request.requestVariables,
+  })
+
+  // Create a new example response with default values and original request
+  const newExample: HoppRESTRequestResponse = {
+    name: exampleName,
+    code: 200,
+    status: "OK",
+    headers: [],
+    body: "",
+    originalRequest,
+  }
+
+  // Calculate the new example's index (will be used as exampleID)
+  const existingResponsesCount = request.responses
+    ? Object.keys(request.responses).length
+    : 0
+  const newExampleID = existingResponsesCount.toString()
+
+  const updatedRequest = {
+    ...request,
+    responses: {
+      ...request.responses,
+      [exampleName]: newExample,
+    },
+  }
+
+  if (collectionsType.value.type === "my-collections") {
+    const folderPath = editingFolderPath.value
+    const requestIndex = editingRequestIndex.value
+
+    if (folderPath === null || requestIndex === null) return
+
+    const isValidToken = await handleTokenValidation()
+    if (!isValidToken) return
+
+    editRESTRequest(folderPath, requestIndex, updatedRequest)
+    toast.success(t("response.saved"))
+
+    const possibleRequestActiveTab = tabs.getTabRefWithSaveContext({
+      originLocation: "user-collection",
+      requestIndex,
+      folderPath,
+    })
+
+    // Update request tab responses if it's open
+    if (
+      possibleRequestActiveTab &&
+      possibleRequestActiveTab.value.document.type === "request"
+    ) {
+      possibleRequestActiveTab.value.document.request.responses =
+        updatedRequest.responses
+    }
+
+    // Close the modal first
+    displayModalAddExample(false)
+
+    // Open the new example in a new tab
+    tabs.createNewTab({
+      response: {
+        ...cloneDeep(newExample),
+        name: exampleName,
+      },
+      isDirty: false,
+      type: "example-response",
+      saveContext: {
+        originLocation: "user-collection",
+        folderPath: folderPath,
+        requestIndex: requestIndex,
+        exampleID: newExampleID,
+      },
+      inheritedProperties: cascadeParentCollectionForProperties(
+        folderPath,
+        "rest"
+      ),
+    })
+  } else if (hasTeamWriteAccess.value) {
+    modalLoadingState.value = true
+
+    if (!editingRequestID.value) return
+
+    // Double-check request is still valid before proceeding
+    if (!request || !request.name) {
+      toast.error(t("error.invalid_request"))
+      modalLoadingState.value = false
+      return
+    }
+
+    const data = {
+      requestID: editingRequestID.value,
+      data: {
+        title: request.name,
+        request: JSON.stringify(updatedRequest),
+      },
+    }
+
+    pipe(
+      runMutation(UpdateRequestDocument, data),
+      TE.match(
+        (err: GQLError<string>) => {
+          toast.error(`${getErrorMessage(err)}`)
+          modalLoadingState.value = false
+        },
+        () => {
+          modalLoadingState.value = false
+          toast.success(t("response.saved"))
+          displayModalAddExample(false)
+
+          const requestID = editingRequestID.value
+          const collectionID = editingFolderPath.value
+
+          if (!requestID) return
+
+          // Update the request tab responses if it's open
+          const possibleRequestActiveTab = tabs.getTabRefWithSaveContext({
+            originLocation: "team-collection",
+            requestID: requestID,
+          })
+
+          if (
+            possibleRequestActiveTab &&
+            possibleRequestActiveTab.value.document.type === "request"
+          ) {
+            possibleRequestActiveTab.value.document.request.responses =
+              updatedRequest.responses
+          }
+
+          // Open the new example in a new tab
+          tabs.createNewTab({
+            response: {
+              ...cloneDeep(newExample),
+              name: exampleName,
+            },
+            isDirty: false,
+            type: "example-response",
+            saveContext: {
+              originLocation: "team-collection",
+              requestID: requestID,
+              collectionID: collectionID ?? undefined,
+              exampleID: newExampleID,
+            },
+            inheritedProperties: collectionID
+              ? teamCollectionService.cascadeParentCollectionForProperties(
+                  collectionID
+                )
+              : undefined,
+          })
+        }
+      )
+    )()
+
+    return
+  }
+}
+
 const removeCollection = (id: string) => {
   if (collectionsType.value.type === "my-collections")
     editingCollectionIndex.value = parseInt(id)
@@ -1672,15 +2043,8 @@ const onRemoveCollection = async () => {
     toast.success(t("state.deleted"))
     displayConfirmModal(false)
 
-    // delete the secret collection variables
-    // and current collection variables value if the collection is removed
     if (collectionToRemove) {
-      secretEnvironmentService.deleteSecretEnvironment(
-        collectionToRemove._ref_id ?? `${collectionIndex}`
-      )
-      currentEnvironmentValueService.deleteEnvironment(
-        collectionToRemove._ref_id ?? `${collectionIndex}`
-      )
+      flushLocalStoresForCollectionTree(collectionToRemove)
     }
   } else if (hasTeamWriteAccess.value) {
     const collectionID = editingCollectionID.value
@@ -1695,12 +2059,20 @@ const onRemoveCollection = async () => {
       emit("select", null)
     }
 
+    // Capture the subtree BEFORE the mutation so the
+    // team-collection-removed subscription can't drop it from FE state
+    // before we flush nested entries.
+    const subtreeSnapshot =
+      teamCollectionService.findCollectionByID(collectionID)
+
     removeTeamCollectionOrFolder(collectionID).then(() => {
       resetTeamRequestsContext()
 
-      // delete the secret collection variables
-      // and current collection variables value if the collection is removed
-      if (collectionID) {
+      if (subtreeSnapshot) {
+        flushLocalStoresForTeamCollectionTree(subtreeSnapshot)
+      } else if (collectionID) {
+        // Snapshot miss (already removed from tree). Flush at least the
+        // top-level id so the secret service doesn't leak this entry.
         secretEnvironmentService.deleteSecretEnvironment(collectionID)
         currentEnvironmentValueService.deleteEnvironment(collectionID)
       }
@@ -1733,8 +2105,6 @@ const onRemoveFolder = async () => {
       emit("select", null)
     }
 
-    const folderIndex = pathToLastIndex(folderPath)
-
     const folderToRemove = folderPath
       ? navigateToFolderWithIndexPath(
           restCollectionStore.value.state,
@@ -1755,15 +2125,8 @@ const onRemoveFolder = async () => {
     toast.success(t("state.deleted"))
     displayConfirmModal(false)
 
-    // delete the secret collection variables
-    // and current collection variables value if the collection is removed
     if (folderToRemove) {
-      secretEnvironmentService.deleteSecretEnvironment(
-        folderToRemove.id ?? `${folderIndex}`
-      )
-      currentEnvironmentValueService.deleteEnvironment(
-        folderToRemove.id ?? `${folderIndex}`
-      )
+      flushLocalStoresForCollectionTree(folderToRemove)
     }
   } else if (hasTeamWriteAccess.value) {
     const collectionID = editingCollectionID.value
@@ -1778,12 +2141,15 @@ const onRemoveFolder = async () => {
       emit("select", null)
     }
 
+    const subtreeSnapshot =
+      teamCollectionService.findCollectionByID(collectionID)
+
     removeTeamCollectionOrFolder(collectionID).then(() => {
       resetTeamRequestsContext()
 
-      // delete the secret collection variables
-      // and current collection variables value if the collection is removed
-      if (collectionID) {
+      if (subtreeSnapshot) {
+        flushLocalStoresForTeamCollectionTree(subtreeSnapshot)
+      } else if (collectionID) {
         secretEnvironmentService.deleteSecretEnvironment(collectionID)
         currentEnvironmentValueService.deleteEnvironment(collectionID)
       }
@@ -1837,6 +2203,9 @@ const onRemoveRequest = async () => {
 
       // since the request is deleted, we need to remove the saved responses as well
       possibleTab.value.document.request.responses = {}
+
+      // remove inherited properties
+      possibleTab.value.document.inheritedProperties = undefined
     }
 
     const requestToRemove = navigateToFolderWithIndexPath(
@@ -1898,6 +2267,9 @@ const onRemoveRequest = async () => {
 
       // since the request is deleted, we need to remove the saved responses as well
       possibleTab.value.document.request.responses = {}
+
+      // remove inherited properties
+      possibleTab.value.document.inheritedProperties = undefined
     }
   }
 }
@@ -2819,54 +3191,164 @@ const initializeDownloadCollection = async (
 
   if (result.type === "unknown" || result.type === "saved") {
     toast.success(t("state.download_started").toString())
+    platform.analytics?.logEvent({
+      type: "HOPP_EXPORT_COLLECTION",
+      exporter: "json",
+      platform: "rest",
+    })
   }
 }
 
 /**
- * Export a specific collection or folder
- * Triggered by the export button in the tippy menu
- * @param collection - Collection or folder to be exported
+ * Entry point from the collection context menu. Opens the format-chooser
+ * modal so the user can pick between Hoppscotch JSON and OpenAPI 3.1.
  */
-const exportData = async (collection: HoppCollection | TeamCollection) => {
-  if (collectionsType.value.type === "my-collections") {
-    const collectionJSON = JSON.stringify(collection, null, 2)
+const exportData = (collection: HoppCollection | TeamCollection) => {
+  exportTargetCollection.value = collection
+  showExportModal.value = true
+}
 
-    // Strip `export {};\n` from `testScript` and `preRequestScript` fields
-    const cleanedCollectionJSON = collectionJSON.replace(/export \{\};\\n/g, "")
+/**
+ * Native Hoppscotch JSON export (the original behavior of `exportData`).
+ */
+const doExportHoppCollection = async (
+  collection: HoppCollection | TeamCollection
+) => {
+  // Strip `export {};\n` from `testScript` and `preRequestScript` fields, and
+  // strip `_ref_id` / secret variable values via `stripCollectionTreeForStore`
+  // so neither leaks into the exported file.
+  const stringifyForExport = (coll: HoppCollection): string =>
+    stripJsonSerializedModulePrefix(
+      JSON.stringify(stripCollectionTreeForStore(coll), stripRefIdReplacer, 2)
+    )
 
-    const name = (collection as HoppCollection).name
-
-    initializeDownloadCollection(cleanedCollectionJSON, name)
-  } else {
-    if (!collection.id) return
-    exportLoading.value = true
-
-    pipe(
-      getCompleteCollectionTree(collection.id),
-      TE.match(
-        (err: GQLError<string>) => {
-          toast.error(`${getErrorMessage(err)}`)
-          exportLoading.value = false
-          return
-        },
-        async (coll) => {
-          const hoppColl = teamCollToHoppRESTColl(coll)
-          const collectionJSONString = JSON.stringify(hoppColl, null, 2)
-
-          // Strip `export {};\n` from `testScript` and `preRequestScript` fields
-          const cleanedCollectionJSON = collectionJSONString.replace(
-            /export \{\};\\n/g,
-            ""
-          )
-
-          await initializeDownloadCollection(
-            cleanedCollectionJSON,
-            hoppColl.name
-          )
-          exportLoading.value = false
-        }
+  exportLoading.value = true
+  try {
+    if (collectionsType.value.type === "my-collections") {
+      const hoppColl = collection as HoppCollection
+      await initializeDownloadCollection(
+        stringifyForExport(hoppColl),
+        hoppColl.name
       )
-    )()
+      return
+    }
+
+    if (!collection.id) return
+    const teamID = collectionsType.value.selectedTeam?.teamID
+    if (!teamID) return
+
+    const result = await getTeamCollectionObject(teamID, collection.id)
+    if (E.isLeft(result)) {
+      const errMsg =
+        typeof result.left === "string"
+          ? result.left
+          : getErrorMessage(result.left)
+      toast.error(`${errMsg}`)
+      return
+    }
+    const hoppColl = result.right
+    await initializeDownloadCollection(
+      stringifyForExport(hoppColl),
+      hoppColl.name
+    )
+  } catch {
+    toast.error(t("error.something_went_wrong"))
+  }
+}
+
+const doExportOpenAPI = async (format: "json" | "yaml") => {
+  const collection = exportTargetCollection.value
+  if (!collection) return
+
+  const thisGeneration = ++exportGeneration
+
+  const saveOpenAPIDoc = async (
+    openAPIDoc: Record<string, unknown>,
+    name: string
+  ) => {
+    const isYaml = format === "yaml"
+    let data: string
+    try {
+      data = isYaml
+        ? yaml.dump(openAPIDoc)
+        : JSON.stringify(openAPIDoc, null, 2)
+    } catch {
+      toast.error(t("error.something_went_wrong"))
+      return
+    }
+    const contentType = isYaml ? "application/x-yaml" : "application/json"
+    const extension = isYaml ? "yaml" : "json"
+
+    // `saveFileWithDialog` returns a discriminated SaveFileResponse and does
+    // not throw — checking `result.type` is the only correct way to know if
+    // the user actually saved or cancelled.
+    const result = await platform.kernelIO.saveFileWithDialog({
+      data,
+      contentType,
+      suggestedFilename: `${name}-openapi.${extension}`,
+      filters: [
+        {
+          name: `OpenAPI ${extension.toUpperCase()} file`,
+          extensions: [extension],
+        },
+      ],
+    })
+
+    if (result.type === "saved" || result.type === "unknown") {
+      toast.success(t("state.download_started").toString())
+      platform.analytics?.logEvent({
+        type: "HOPP_EXPORT_COLLECTION",
+        exporter: "openapi",
+        platform: "rest",
+      })
+    }
+  }
+
+  exportLoading.value = true
+
+  if (collectionsType.value.type === "my-collections") {
+    try {
+      // Chooser modal warns about lossiness upfront; per-export warnings would
+      // be redundant.
+      const { doc: openAPIDoc } = hoppCollectionToOpenAPI(
+        collection as HoppCollection
+      )
+      const name = (collection as HoppCollection).name
+      await saveOpenAPIDoc(openAPIDoc, name)
+    } catch {
+      toast.error(t("error.something_went_wrong"))
+    } finally {
+      if (thisGeneration === exportGeneration) closeExportModal()
+    }
+  } else {
+    if (!collection.id) {
+      closeExportModal()
+      return
+    }
+    const teamID = collectionsType.value.selectedTeam?.teamID
+    if (!teamID) {
+      closeExportModal()
+      return
+    }
+
+    try {
+      const result = await getTeamCollectionObject(teamID, collection.id)
+      if (E.isLeft(result)) {
+        const errMsg =
+          typeof result.left === "string"
+            ? result.left
+            : getErrorMessage(result.left)
+        toast.error(`${errMsg}`)
+        return
+      }
+      const hoppColl = result.right
+      const { doc: openAPIDoc } = hoppCollectionToOpenAPI(hoppColl)
+      await saveOpenAPIDoc(openAPIDoc, hoppColl.name)
+    } catch {
+      toast.error(t("error.something_went_wrong"))
+    } finally {
+      if (thisGeneration === exportGeneration) closeExportModal()
+    }
   }
 }
 
@@ -2906,6 +3388,26 @@ const getCurrentValue = (
   )?.currentValue
 }
 
+/**
+ * Restore both `initialValue` and `currentValue` for a secret variable from
+ * the local secret store. Both fields are blanked at the wire boundary
+ * before the variable is sent to the backend, so when the user reopens the
+ * Properties modal we re-populate from `secretEnvironmentService`.
+ * Returns null for non-secret variables (callers fall back to existing
+ * current-value lookup) or when the slot has no entry in the secret store.
+ */
+const getSecretValues = (
+  isSecret: boolean,
+  varIndex: number,
+  collectionID: string
+): { value: string; initialValue: string } | null => {
+  if (!isSecret) return null
+  return secretEnvironmentService.getSecretEnvironmentVariableValue(
+    collectionID,
+    varIndex
+  )
+}
+
 const editProperties = async (payload: {
   collectionIndex: string
   collection: HoppCollection | TeamCollection
@@ -2930,6 +3432,7 @@ const editProperties = async (payload: {
       },
       headers: [],
       variables: [],
+      scripts: [],
     }
 
     if (parentIndex) {
@@ -2942,14 +3445,15 @@ const editProperties = async (payload: {
     const collectionVariables = pipe(
       (collection as HoppCollection).variables ?? [],
       A.mapWithIndex((index, e) => {
+        const storeID = (collection as HoppCollection)._ref_id ?? collectionId!
+        const stored = getSecretValues(e.secret, index, storeID)
         return {
           ...e,
           currentValue:
-            getCurrentValue(
-              e.secret,
-              index,
-              (collection as HoppCollection)._ref_id ?? collectionId!
-            ) ?? e.currentValue,
+            stored?.value ??
+            getCurrentValue(e.secret, index, storeID) ??
+            e.currentValue,
+          initialValue: stored?.initialValue ?? e.initialValue,
         }
       })
     )
@@ -2980,18 +3484,22 @@ const editProperties = async (payload: {
       } as HoppRESTAuth,
       headers: [] as HoppRESTHeaders,
       variables: [] as HoppCollectionVariable[],
+      description: null as string | null,
       folders: null,
       requests: null,
+      preRequestScript: "",
+      testScript: "",
     }
 
     if (parentIndex) {
-      const { auth, headers, variables } =
+      const { auth, headers, variables, scripts } =
         teamCollectionService.cascadeParentCollectionForProperties(parentIndex)
 
       inheritedProperties = {
         auth,
         headers,
         variables,
+        scripts,
       }
     }
 
@@ -2999,19 +3507,30 @@ const editProperties = async (payload: {
       const collectionVariables = pipe(
         (data.variables ?? []) as HoppCollectionVariable[],
         A.mapWithIndex((index, e) => {
+          const stored = getSecretValues(e.secret, index, collectionId!)
           return {
             ...e,
             currentValue:
-              getCurrentValue(e.secret, index, collectionId!) ?? e.currentValue,
+              stored?.value ??
+              getCurrentValue(e.secret, index, collectionId!) ??
+              e.currentValue,
+            initialValue: stored?.initialValue ?? e.initialValue,
           }
         })
       )
 
+      const collectionData: CollectionDataProps = {
+        auth: data.auth,
+        headers: data.headers,
+        variables: collectionVariables,
+        description: data.description,
+        preRequestScript: data.preRequestScript ?? "",
+        testScript: data.testScript ?? "",
+      }
+
       coll = {
         ...coll,
-        auth: data.auth,
-        headers: data.headers as HoppRESTHeaders,
-        variables: collectionVariables as HoppCollectionVariable[],
+        ...collectionData,
       }
     }
 
@@ -3058,6 +3577,7 @@ const setCollectionProperties = (newCollection: {
           ? O.some({
               key: e.key,
               value: e.currentValue,
+              initialValue: e.initialValue,
               varIndex: i,
             })
           : O.none
@@ -3078,24 +3598,17 @@ const setCollectionProperties = (newCollection: {
       )
     )
 
-    secretEnvironmentService.addSecretEnvironment(
-      collection._ref_id ?? collectionId!,
-      secretVariables
-    )
+    // Mirror the read-side keying in `editProperties`.
+    const storeKey =
+      collectionsType.value.type === "team-collections"
+        ? collectionId!
+        : (collection._ref_id ?? collectionId!)
 
-    currentEnvironmentValueService.addEnvironment(
-      collection._ref_id ?? collectionId!,
-      nonSecretVariables
-    )
+    secretEnvironmentService.addSecretEnvironment(storeKey, secretVariables)
 
-    //set current value and secret values to empty string
-    collection.variables = pipe(
-      filteredVariables,
-      A.map((e) => ({
-        ...e,
-        currentValue: "",
-      }))
-    )
+    currentEnvironmentValueService.addEnvironment(storeKey, nonSecretVariables)
+
+    collection.variables = stripSecretVariableValuesForWire(filteredVariables)
   }
 
   if (collectionsType.value.type === "my-collections") {
@@ -3110,10 +3623,16 @@ const setCollectionProperties = (newCollection: {
     })
     toast.success(t("collection.properties_updated"))
   } else if (hasTeamWriteAccess.value && collectionId) {
-    const data = {
-      auth: collection.auth,
-      headers: collection.headers,
-      variables: collection.variables,
+    const data: CollectionDataProps = {
+      auth: collection.auth ?? {
+        authType: "inherit",
+        authActive: true,
+      },
+      headers: collection.headers ?? [],
+      variables: collection.variables ?? [],
+      description: collection.description ?? null,
+      preRequestScript: collection.preRequestScript ?? "",
+      testScript: collection.testScript ?? "",
     }
 
     // Mark as loading BEFORE triggering async update to avoid race conditions and push the collectionId to the loading array
@@ -3124,7 +3643,7 @@ const setCollectionProperties = (newCollection: {
     }
 
     pipe(
-      updateTeamCollection(collectionId, JSON.stringify(data), undefined),
+      updateTeamCollection(collectionId, data, undefined),
       TE.match(
         (err: GQLError<string>) => {
           toast.error(`${getErrorMessage(err)}`)
@@ -3210,6 +3729,47 @@ const sortCollections = (payload: {
     sortBy: "name",
     sortOrder,
   })
+}
+
+const openDocumentation = ({
+  pathOrID,
+  collection,
+}: {
+  pathOrID: string
+  collection: HoppCollection | TeamCollection
+}) => {
+  editingCollectionPath.value = pathOrID
+  editingCollection.value = collection
+  editingCollectionIsTeam.value =
+    collectionsType.value.type === "team-collections"
+  editingCollectionID.value =
+    collectionsType.value.type === "team-collections"
+      ? (collection.id ?? null)
+      : ((collection as HoppCollection).id ??
+        (collection as HoppCollection)._ref_id ??
+        null)
+
+  displayModalDocumentation(true)
+}
+
+const openRequestDocumentation = ({
+  folderPath,
+  requestIndex,
+  request,
+}: {
+  folderPath: string
+  requestIndex: string
+  request: HoppRESTRequest
+}) => {
+  editingRequest.value = request
+  editingFolderPath.value = folderPath
+  editingRequestIndex.value = parseInt(requestIndex)
+  editingRequestID.value = requestIndex
+  editingCollectionID.value = folderPath.split("/").at(-1) ?? null
+  editingCollectionIsTeam.value =
+    collectionsType.value.type === "team-collections"
+
+  displayModalDocumentation(true)
 }
 
 const resolveConfirmModal = (title: string | null) => {

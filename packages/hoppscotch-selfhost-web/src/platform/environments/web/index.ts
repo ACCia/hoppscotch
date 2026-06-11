@@ -11,19 +11,19 @@ import {
   setGlobalEnvVariables,
   updateEnvironment,
 } from "@hoppscotch/common/newstore/environments"
-import { authEvents$, def as platformAuth } from "@platform/auth/web"
+import { authEvents$, def as platformAuth } from "@app/platform/auth/web"
 
 import { runGQLSubscription } from "@hoppscotch/common/helpers/backend/GQLClient"
 import { EnvironmentsPlatformDef } from "@hoppscotch/common/src/platform/environments"
 
-import { environnmentsSyncer } from "@platform/environments/web/sync"
+import { environnmentsSyncer } from "@app/platform/environments/web/sync"
 
 import {
   Environment,
   EnvironmentSchemaVersion,
   GlobalEnvironment,
 } from "@hoppscotch/data"
-import { runDispatchWithOutSyncing } from "@lib/sync"
+import { runDispatchWithOutSyncing } from "@app/lib/sync"
 import {
   createUserGlobalEnvironment,
   getGlobalEnvironments,
@@ -119,15 +119,21 @@ async function loadGlobalEnvironments() {
     const globalEnv = res.right.me.globalEnvironments
 
     if (globalEnv) {
-      const globalEnvVariableEntries = JSON.parse(globalEnv.variables)
+      const parsed = JSON.parse(globalEnv.variables)
 
-      const result = entityReference(GlobalEnvironment).safeParse(
-        globalEnvVariableEntries
-      )
+      // Parse ladder: wrapper → wrap-bare-array → empty wrapper.
+      let result = entityReference(GlobalEnvironment).safeParse(parsed)
+
+      if (!result.success && Array.isArray(parsed)) {
+        result = entityReference(GlobalEnvironment).safeParse({
+          v: 2,
+          variables: parsed,
+        })
+      }
 
       runDispatchWithOutSyncing(() => {
         setGlobalEnvVariables(
-          result.success ? result.data : globalEnvVariableEntries
+          result.success ? result.data : { v: 2, variables: [] }
         )
         setGlobalEnvID(globalEnv.id)
       })
@@ -181,7 +187,22 @@ function setupUserEnvironmentUpdatedSubscription() {
       // handle the case for global environments
       if (isGlobal) {
         runDispatchWithOutSyncing(() => {
-          setGlobalEnvVariables(JSON.parse(variables))
+          const parsed = JSON.parse(variables)
+
+          // Mirror the load path: try as-is first (so v0 bare arrays still
+          // migrate via verzod), only wrap a bare array as a v2 envelope
+          // when the as-is parse fails (the broken-intermediate-state case).
+          let result = entityReference(GlobalEnvironment).safeParse(parsed)
+          if (!result.success && Array.isArray(parsed)) {
+            result = entityReference(GlobalEnvironment).safeParse({
+              v: 2,
+              variables: parsed,
+            })
+          }
+
+          setGlobalEnvVariables(
+            result.success ? result.data : { v: 2, variables: [] }
+          )
         })
       } else {
         // handle the case for normal environments

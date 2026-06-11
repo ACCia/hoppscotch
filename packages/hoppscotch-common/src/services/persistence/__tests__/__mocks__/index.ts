@@ -1,4 +1,5 @@
 import {
+  CollectionSchemaVersion,
   Environment,
   GlobalEnvironment,
   HoppCollection,
@@ -25,7 +26,7 @@ const DEFAULT_SETTINGS = getDefaultSettings()
 
 export const REST_COLLECTIONS_MOCK: HoppCollection[] = [
   {
-    v: 10,
+    v: CollectionSchemaVersion,
     name: "Echo",
     requests: [
       {
@@ -47,18 +48,22 @@ export const REST_COLLECTIONS_MOCK: HoppCollection[] = [
         },
         requestVariables: [],
         responses: {},
+        description: null,
       },
     ],
     auth: { authType: "none", authActive: true },
     headers: [],
     variables: [],
+    description: null,
+    preRequestScript: "",
+    testScript: "",
     folders: [],
   },
 ]
 
 export const GQL_COLLECTIONS_MOCK: HoppCollection[] = [
   {
-    v: 10,
+    v: CollectionSchemaVersion,
     name: "Echo",
     requests: [
       {
@@ -77,6 +82,9 @@ export const GQL_COLLECTIONS_MOCK: HoppCollection[] = [
     auth: { authType: "none", authActive: true },
     headers: [],
     variables: [],
+    description: null,
+    preRequestScript: "",
+    testScript: "",
     folders: [],
   },
 ]
@@ -173,6 +181,7 @@ export const REST_HISTORY_MOCK: RESTHistoryEntry[] = [
       requestVariables: [],
       v: RESTReqSchemaVersion,
       responses: {},
+      description: null,
     },
     responseMeta: { duration: 807, statusCode: 200 },
     star: false,
@@ -240,6 +249,7 @@ export const REST_TAB_STATE_MOCK: PersistableTabState<HoppRequestDocument> = {
           body: { contentType: null, body: null },
           requestVariables: [],
           responses: {},
+          description: null,
           _ref_id: "req_ref_id",
         },
         isDirty: false,

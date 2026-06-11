@@ -112,6 +112,7 @@
     "continue_with_github_enterprise": "Continue with GitHub Enterprise",
     "continue_with_google": "Jatka Googlella",
     "continue_with_microsoft": "Continue with Microsoft",
+    "continue_with_oidc": "Jatka OIDC:n kanssa",
     "email": "Sähköposti",
     "logged_out": "Kirjautunut ulos",
     "login": "Kirjaudu sisään",
@@ -623,7 +624,7 @@
   "response": {
     "audio": "Audio",
     "body": "Vastauselin",
-    "filter_response_body": "Filter JSON response body (uses JSONPath syntax)",
+    "filter_response_body": "Filter JSON response body (uses jq syntax)",
     "headers": "Otsikot",
     "html": "HTML",
     "image": "Kuva",

@@ -16,7 +16,7 @@ import {
   HoppCollectionVariable,
 } from "@hoppscotch/data"
 import * as A from "fp-ts/Array"
-import { flow, pipe } from "fp-ts/function"
+import { pipe } from "fp-ts/function"
 import * as O from "fp-ts/Option"
 import * as S from "fp-ts/string"
 import * as TE from "fp-ts/TaskEither"
@@ -63,10 +63,10 @@ const getCollectionSchema = (jsonStr: string): string | null => {
   }
 }
 
-const replacePMVarTemplating = flow(
-  S.replace(/{{\s*/g, "<<"),
-  S.replace(/\s*}}/g, ">>")
-)
+export const replacePMVarTemplating = (value: unknown): string => {
+  const str = typeof value === "string" ? value : String(value ?? "")
+  return pipe(str, S.replace(/{{\s*/g, "<<"), S.replace(/\s*}}/g, ">>"))
+}
 
 const PMRawLanguageOptionsToContentTypeMap: Record<
   PMRawLanguage,
@@ -121,11 +121,17 @@ const getHoppCollVariables = (
         variable.key.length > 0
     ),
     A.map((variable) => {
+      // Postman 12+ uses `secret: true`; older exports use `type: "secret"`.
+      // The SDK's types don't surface the new flag, so read it off raw.
+      const isSecret =
+        variable.type === "secret" ||
+        (variable as { secret?: boolean }).secret === true
+
       return <HoppCollectionVariable>{
         key: replacePMVarTemplating(variable.key ?? ""),
         initialValue: replacePMVarTemplating(variable.value ?? ""),
         currentValue: "",
-        secret: variable.type === "secret",
+        secret: isSecret,
       }
     })
   )
@@ -258,8 +264,8 @@ const getHoppResponses = (
 }
 
 type PMRequestAuthDef<
-  AuthType extends
-    RequestAuthDefinition["type"] = RequestAuthDefinition["type"],
+  AuthType extends RequestAuthDefinition["type"] =
+    RequestAuthDefinition["type"],
 > = AuthType extends RequestAuthDefinition["type"] & string
   ? // eslint-disable-next-line no-unused-vars
     { type: AuthType } & { [x in AuthType]: VariableDefinition[] }
@@ -299,7 +305,7 @@ const getHoppReqAuth = (
         getVariableValue(auth.apikey, "value") ?? ""
       ),
       addTo:
-        (getVariableValue(auth.apikey, "in") ?? "query") === "query"
+        getVariableValue(auth.apikey, "in") === "query"
           ? "QUERY_PARAMS"
           : "HEADERS",
     }
@@ -550,12 +556,73 @@ const getHoppScripts = (
   return { preRequestScript, testScript }
 }
 
+/**
+ * Extracts pre-request and test scripts from a Postman ItemGroup (collection/folder)
+ * Postman collections and folders can have their own scripts that run before/after all requests
+ */
+const getHoppCollectionScripts = (
+  ig: ItemGroup<Item>,
+  importScripts: boolean
+): { preRequestScript: string; testScript: string } => {
+  if (!importScripts) {
+    return { preRequestScript: "", testScript: "" }
+  }
+
+  let preRequestScript = ""
+  let testScript = ""
+
+  // ItemGroup (collection/folder) stores scripts in the events property
+  if (ig.events) {
+    const events = ig.events.all()
+    events.forEach((event: any) => {
+      if (event.listen === "prerequest") {
+        preRequestScript = extractScriptFromEvent(event)
+      } else if (event.listen === "test") {
+        testScript = extractScriptFromEvent(event)
+      }
+    })
+  }
+
+  return { preRequestScript, testScript }
+}
+
+const getCollectionDescription = (
+  docField?: string | DescriptionDefinition
+): string | null => {
+  if (!docField) {
+    return null
+  }
+
+  if (typeof docField === "string") {
+    return docField
+  } else if (typeof docField === "object" && "content" in docField) {
+    return docField.content || null
+  }
+
+  return null
+}
+
+const getRequestDescription = (
+  docField?: string | DescriptionDefinition
+): string | null => {
+  if (!docField) {
+    return null
+  }
+
+  if (typeof docField === "string") {
+    return docField
+  } else if (typeof docField === "object" && "content" in docField) {
+    return docField.content || null
+  }
+
+  return null
+}
+
 const getHoppRequest = (
   item: Item,
   importScripts: boolean
 ): HoppRESTRequest => {
   const { preRequestScript, testScript } = getHoppScripts(item, importScripts)
-
   return makeRESTRequest({
     name: item.name,
     endpoint: getHoppReqURL(item.request.url),
@@ -571,14 +638,20 @@ const getHoppRequest = (
     responses: getHoppResponses(item.responses),
     preRequestScript,
     testScript,
+    description: getRequestDescription(item.request.description),
   })
 }
 
 const getHoppFolder = (
   ig: ItemGroup<Item>,
   importScripts: boolean
-): HoppCollection =>
-  makeCollection({
+): HoppCollection => {
+  const { preRequestScript, testScript } = getHoppCollectionScripts(
+    ig,
+    importScripts
+  )
+
+  return makeCollection({
     name: ig.name,
     folders: pipe(
       ig.items.all(),
@@ -593,7 +666,11 @@ const getHoppFolder = (
     auth: getHoppReqAuth(ig.auth),
     headers: [],
     variables: getHoppCollVariables(ig),
+    description: getCollectionDescription(ig.description),
+    preRequestScript,
+    testScript,
   })
+}
 
 export const getHoppCollections = (
   collections: PMCollection[],

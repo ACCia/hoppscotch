@@ -235,8 +235,13 @@ export const resolvesEnvsInBody = (
 
   let bodyContent = ""
 
+  // WORKAROUND: body.body can be null when creating example responses programmatically
+  // (see PR #5652), despite the Zod schema requiring string with .catch(""). The ?? ""
+  // fallback guards against stripComments() crash when passed null/empty, since the
+  // underlying stripComments_("") from jsonc-parser returns null. This pattern is used
+  // consistently throughout this file (see also getFinalBodyFromRequest).
   if (isJSONContentType(body.contentType))
-    bodyContent = stripComments(body.body)
+    bodyContent = stripComments(body.body ?? "")
 
   if (body.contentType === "application/x-www-form-urlencoded") {
     bodyContent = body.body
@@ -314,8 +319,7 @@ export function getFinalBodyFromRequest(
       // we split array blobs into separate entries (FormData will then join them together during exec)
       arrayFlatMap((x) =>
         x.isFile
-          ? // @ts-expect-error TODO: Fix this type error
-            x.value.map((v) => ({
+          ? (Array.isArray(x.value) ? x.value : [x.value]).map((v) => ({
               key: parseTemplateString(x.key, envVariables),
               value: v as string | Blob,
               contentType: x.contentType,
@@ -339,7 +343,7 @@ export function getFinalBodyFromRequest(
   let bodyContent = request.body.body ?? ""
 
   if (isJSONContentType(request.body.contentType))
-    bodyContent = stripComments(request.body.body)
+    bodyContent = stripComments(request.body.body ?? "")
 
   // body can be null if the content-type is not set
   return parseBodyEnvVariables(bodyContent, envVariables)
@@ -351,13 +355,15 @@ export function getFinalBodyFromRequest(
  * @param request The request to source from
  * @param environment The environment to apply
  * @param showKeyIfSecret Whether to show the key if the value is a secret
+ * @param showKeyIfNotFound Whether to show the key if the value is not found
  *
  * @returns An object with extra fields defining a complete request
  */
 export async function getEffectiveRESTRequest(
   request: HoppRESTRequest,
   environment: Environment,
-  showKeyIfSecret = false
+  showKeyIfSecret = false,
+  showKeyIfNotFound = false
 ): Promise<EffectiveHoppRESTRequest> {
   const effectiveFinalHeaders = pipe(
     (
@@ -429,7 +435,8 @@ export async function getEffectiveRESTRequest(
       request.endpoint,
       environment.variables,
       false,
-      showKeyIfSecret
+      showKeyIfSecret,
+      showKeyIfNotFound
     ),
     effectiveFinalHeaders,
     effectiveFinalParams,

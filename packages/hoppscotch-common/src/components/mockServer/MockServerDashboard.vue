@@ -22,7 +22,7 @@
       <span class="flex">
         <HoppButtonSecondary
           v-tippy="{ theme: 'tooltip' }"
-          to="https://docs.hoppscotch.io/documentation/features/mock-servers"
+          to="https://docs.hoppscotch.io/documentation/features/mock"
           blank
           :title="t('app.wiki')"
           :icon="IconHelpCircle"
@@ -32,7 +32,7 @@
 
     <div class="flex flex-1 flex-col">
       <div
-        v-if="loading"
+        v-if="isFetchingServers"
         class="flex flex-1 flex-col items-center justify-center p-4"
       >
         <HoppSmartSpinner class="mb-4" />
@@ -177,11 +177,7 @@
     </div>
 
     <!-- Modals -->
-    <MockServerCreateMockServer
-      v-if="showCreateModal"
-      :show="showCreateModal"
-      @hide-modal="showCreateModal = false"
-    />
+    <MockServerCreateNewMockServerModal />
     <MockServerEditMockServer
       v-if="showEditModal && selectedMockServer"
       :show="showEditModal"
@@ -213,23 +209,20 @@ import { computed, ref } from "vue"
 import { TippyComponent } from "vue-tippy"
 import { useMockServerStatus } from "~/composables/mockServer"
 import { useToast } from "~/composables/toast"
+import { useReadonlyStream } from "~/composables/stream"
 import { copyToClipboard } from "~/helpers/utils/clipboard"
-import type { MockServer } from "~/newstore/mockServers"
+import type { MockServer } from "~/helpers/backend/types/MockServer"
 import { platform } from "~/platform"
 
 import {
   deleteMockServer as deleteMockServerInStore,
+  loading$,
   showCreateMockServerModal$,
   updateMockServer as updateMockServerInStore,
 } from "~/newstore/mockServers"
 
-import MockServerCreateMockServer from "~/components/mockServer/CreateMockServer.vue"
 import MockServerEditMockServer from "~/components/mockServer/EditMockServer.vue"
 import MockServerLogs from "~/components/mockServer/MockServerLogs.vue"
-import {
-  deleteMockServer as deleteMockServerMutation,
-  updateMockServer as updateMockServerMutation,
-} from "~/helpers/backend/mutations/MockServer"
 
 // Icons
 import IconCheck from "~icons/lucide/check"
@@ -247,8 +240,8 @@ const t = useI18n()
 const toast = useToast()
 const colorMode = useColorMode()
 const { mockServers } = useMockServerStatus()
+const isFetchingServers = useReadonlyStream(loading$, false)
 const loading = ref(false)
-const showCreateModal = ref(false)
 const showEditModal = ref(false)
 const showLogsModal = ref(false)
 const selectedMockServer = ref<MockServer | null>(null)
@@ -278,7 +271,9 @@ const toggleMockServer = async (mockServer: MockServer) => {
   const newActiveState = !mockServer.isActive
 
   await pipe(
-    updateMockServerMutation(mockServer.id, { isActive: newActiveState }),
+    platform.backend.updateMockServer(mockServer.id, {
+      isActive: newActiveState,
+    }),
     TE.match(
       () => {
         toast.error(t("error.something_went_wrong"))
@@ -320,7 +315,7 @@ const confirmDelete = async () => {
   confirmDeleteMockServer.value = false
 
   await pipe(
-    deleteMockServerMutation(mockServer.id),
+    platform.backend.deleteMockServer(mockServer.id),
     TE.match(
       () => {
         toast.error(t("error.something_went_wrong"))
@@ -360,7 +355,7 @@ const copyToClipboardHandler = async (text: string) => {
     setTimeout(() => {
       copyIcon.value = IconCopy
     }, 1000)
-  } catch (error) {
+  } catch (_error) {
     toast.error(t("error.copy_failed"))
   }
 }

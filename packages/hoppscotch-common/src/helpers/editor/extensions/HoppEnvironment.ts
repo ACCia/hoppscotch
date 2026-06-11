@@ -8,8 +8,8 @@ import {
 } from "@codemirror/view"
 import { StreamSubscriberFunc } from "@composables/stream"
 import {
-  HoppRESTRequestVariables,
   parseTemplateStringE,
+  HoppRESTRequestVariables,
 } from "@hoppscotch/data"
 import * as E from "fp-ts/Either"
 import { Ref, watch } from "vue"
@@ -41,6 +41,11 @@ import {
   ENV_VAR_NAME_REGEX,
   HOPP_ENVIRONMENT_REGEX,
 } from "~/helpers/environment-regex"
+import {
+  stabilizeTooltipHover,
+  constrainTooltipToViewport,
+  createTooltipValueRow,
+} from "~/helpers/utils/tooltip"
 
 const HOPP_ENV_HIGHLIGHT =
   "cursor-help transition rounded px-1 focus:outline-none mx-0.5 env-highlight"
@@ -49,6 +54,8 @@ const HOPP_COLLECTION_ENVIRONMENT_HIGHLIGHT = "collection-variable-highlight"
 const HOPP_ENVIRONMENT_HIGHLIGHT = "environment-variable-highlight"
 const HOPP_GLOBAL_ENVIRONMENT_HIGHLIGHT = "global-variable-highlight"
 const HOPP_ENV_HIGHLIGHT_NOT_FOUND = "environment-not-found-highlight"
+// Keep value rows above overlapping CodeMirror decoration layers inside tooltip content.
+const TOOLTIP_ENV_CONTAINER_Z_INDEX_CLASS = "!z-[1002]"
 
 const secretEnvironmentService = getService(SecretEnvironmentService)
 const currentEnvironmentValueService = getService(CurrentValueService)
@@ -124,9 +131,12 @@ const cursorTooltipField = (aggregateEnvs: AggregateEnvironment[]) =>
       const envName = tooltipEnv?.sourceEnv ?? "Choose an Environment"
 
       let envInitialValue = tooltipEnv?.initialValue
-      // If the environment is not a request variable, get the current value from the current environment service
+
+      // If the environment is not a request variable or collection variable, get the current value from the current environment service
+      // For collection variables and request variables, use the value directly from tooltipEnv
       let envCurrentValue =
-        tooltipEnv?.sourceEnv !== "RequestVariable"
+        tooltipEnv?.sourceEnv !== "RequestVariable" &&
+        tooltipEnv?.sourceEnv !== "CollectionVariable"
           ? currentEnvironmentValueService.getEnvironmentByKey(
               tooltipEnv?.sourceEnv !== "Global"
                 ? currentSelectedEnvironment.id
@@ -155,13 +165,7 @@ const cursorTooltipField = (aggregateEnvs: AggregateEnvironment[]) =>
           tooltipEnv?.key ?? ""
         )
 
-      // We need to check if the environment is a secret and if it has a secret value stored in the secret environment service
-      // If it is a secret and has a secret value, we need to show "******" in the tooltip
-      // If it is a secret and does not have a secret value, we need to show "Empty" in the tooltip
-      // If it is not a secret, we need to show the current value or initial value
-      // If the environment is not found, we need to show "Not Found" in the tooltip
-      // If the source environment is not found, we need to show "Not Found" in the tooltip, ie the the environment
-      // is not defined in the selected environment or the global environment
+      // Display secret values as "******" when stored; if no secret is saved, show "Empty" placeholders instead
       if (isSecret) {
         if (hasSecretValueStored && hasSecretInitialValueStored) {
           envInitialValue = "******"
@@ -285,36 +289,34 @@ const cursorTooltipField = (aggregateEnvs: AggregateEnvironment[]) =>
 
           const envContainer = document.createElement("div")
           tooltipContainer.appendChild(envContainer)
-          envContainer.className =
-            "flex flex-col items-start space-y-1 flex-1 w-full mt-2 !z-[1002]"
+          envContainer.className = `flex flex-col items-start space-y-1 flex-1 w-full mt-2 ${TOOLTIP_ENV_CONTAINER_Z_INDEX_CLASS}`
+          envContainer.style.overflow = "hidden"
 
-          const initialValueBlock = document.createElement("div")
-          initialValueBlock.className = "flex items-center space-x-2"
-          const initialValueTitle = document.createElement("div")
-          initialValueTitle.textContent = "Initial"
-          initialValueTitle.className = "font-bold mr-4 "
-          const initialValue = document.createElement("span")
-          initialValue.textContent = envInitialValue || ""
-          initialValueBlock.appendChild(initialValueTitle)
-          initialValueBlock.appendChild(initialValue)
+          // Use createTooltipValueRow for overflow-safe value display
+          const initialValueRow = createTooltipValueRow(
+            "Initial",
+            envInitialValue
+          )
+          const currentValueRow = createTooltipValueRow(
+            "Current",
+            envCurrentValue
+          )
 
-          const currentValueBlock = document.createElement("div")
-          currentValueBlock.className = "flex items-center space-x-2"
-          const currentValueTitle = document.createElement("div")
-          currentValueTitle.textContent = "Current"
-          currentValueTitle.className = "font-bold mr-1.5"
-          const currentValue = document.createElement("span")
-          currentValue.textContent = envCurrentValue || ""
-          currentValueBlock.appendChild(currentValueTitle)
-          currentValueBlock.appendChild(currentValue)
+          envContainer.appendChild(initialValueRow)
+          envContainer.appendChild(currentValueRow)
 
-          envContainer.appendChild(initialValueBlock)
-          envContainer.appendChild(currentValueBlock)
-
-          tooltipContainer.className = "tippy-content env-tooltip-content"
+          tooltipContainer.className =
+            "tippy-content env-tooltip-content env-tooltip-constrained"
           dom.className = "tippy-box"
           dom.dataset.theme = "tooltip"
           dom.appendChild(tooltipContainer)
+
+          // Apply viewport-aware overflow constraints to the tooltip
+          constrainTooltipToViewport(dom, tooltipContainer)
+
+          // Apply an interactive bridge to stabilize hover transitions
+          stabilizeTooltipHover(dom)
+
           return { dom }
         },
       }
@@ -404,25 +406,36 @@ export class HoppEnvironmentPlugin {
     subscribeToStream: StreamSubscriberFunc,
     private editorView: Ref<EditorView | undefined>
   ) {
-    const aggregateEnvs = getAggregateEnvsWithCurrentValue()
-    const currentTab = restTabs.currentActiveTab.value
-    const currentTabRequest =
-      currentTab.document.type === "example-response"
-        ? currentTab.document.response.originalRequest
-        : currentTab.document.request
-    const currentTabInheritedProperty = currentTab.document.inheritedProperties
-
-    if (!currentTabRequest || !currentTabInheritedProperty) return
-
+    // Watch the current active tab to update the variables accordingly
     watch(
-      [currentTabRequest, currentTabInheritedProperty],
-      ([request, document]) => {
+      () => restTabs.currentActiveTab.value,
+      (currentTab) => {
+        const request =
+          currentTab.document.type === "example-response"
+            ? currentTab.document.response.originalRequest
+            : currentTab.document.request
+
+        const inheritedProperties = currentTab.document.inheritedProperties
+
+        // Extract collection variables safely, handling undefined or non-inherited-property types
+        const collectionVariables =
+          inheritedProperties && "variables" in inheritedProperties
+            ? inheritedProperties.variables
+            : []
+
+        // Get request variables if available, otherwise use empty array
+        const requestVariables =
+          request && "requestVariables" in request
+            ? request.requestVariables
+            : []
+
         const requestAndCollVars = getRequestAndCollectionVariables(
-          request.requestVariables,
-          document.variables
+          requestVariables,
+          collectionVariables
         )
 
-        this.envs = [...requestAndCollVars, ...aggregateEnvs]
+        const currentAggregateEnvs = getAggregateEnvsWithCurrentValue()
+        this.envs = [...requestAndCollVars, ...currentAggregateEnvs]
 
         this.editorView.value?.dispatch({
           effects: this.compartment.reconfigure([
@@ -434,13 +447,25 @@ export class HoppEnvironmentPlugin {
       { immediate: true, deep: true }
     )
 
-    const requestAndCollVars = getRequestAndCollectionVariables(
-      currentTabRequest.requestVariables,
-      currentTabInheritedProperty.variables
-    )
-
     subscribeToStream(aggregateEnvsWithCurrentValue$, (envs) => {
-      this.envs = [...requestAndCollVars, ...envs]
+      // Recompute request and collection variables from current tab to avoid stale closure values
+      const tab = restTabs.currentActiveTab.value
+      const request =
+        tab.document.type === "example-response"
+          ? tab.document.response.originalRequest
+          : tab.document.request
+      const inheritedProperties = tab.document.inheritedProperties
+
+      // Get request variables if available, otherwise use empty array
+      const requestVariables =
+        request && "requestVariables" in request ? request.requestVariables : []
+
+      const freshRequestAndCollVars = getRequestAndCollectionVariables(
+        requestVariables,
+        inheritedProperties?.variables ?? []
+      )
+
+      this.envs = [...freshRequestAndCollVars, ...envs]
 
       this.editorView.value?.dispatch({
         effects: this.compartment.reconfigure([

@@ -10,6 +10,8 @@ import V7_VERSION from "./v/7"
 import V8_VERSION from "./v/8"
 import V9_VERSION from "./v/9"
 import V10_VERSION from "./v/10"
+import V11_VERSION from "./v/11"
+import V12_VERSION from "./v/12"
 
 export { CollectionVariable } from "./v/10"
 
@@ -23,7 +25,7 @@ const versionedObject = z.object({
 })
 
 export const HoppCollection = createVersionedEntity({
-  latestVersion: 10,
+  latestVersion: 12,
   versionMap: {
     1: V1_VERSION,
     2: V2_VERSION,
@@ -35,6 +37,8 @@ export const HoppCollection = createVersionedEntity({
     8: V8_VERSION,
     9: V9_VERSION,
     10: V10_VERSION,
+    11: V11_VERSION,
+    12: V12_VERSION,
   },
   getVersion(data) {
     const versionCheck = versionedObject.safeParse(data)
@@ -54,7 +58,7 @@ export type HoppCollectionVariable = InferredEntity<
   typeof HoppCollection
 >["variables"][number]
 
-export const CollectionSchemaVersion = 10
+export const CollectionSchemaVersion = 12
 
 /**
  * Generates a Collection object. This ignores the version number object
@@ -84,6 +88,11 @@ export function translateToNewRESTCollection(x: any): HoppCollection {
   const headers = x.headers ?? []
   const variables = x.variables ?? []
 
+  const description = x.description ?? null
+
+  const preRequestScript = x.preRequestScript ?? ""
+  const testScript = x.testScript ?? ""
+
   const obj = makeCollection({
     name,
     folders,
@@ -91,10 +100,15 @@ export function translateToNewRESTCollection(x: any): HoppCollection {
     auth,
     headers,
     variables,
+    description,
+    preRequestScript,
+    testScript,
   })
 
   if (x.id) obj.id = x.id
-  if (x._ref_id) obj._ref_id = x._ref_id
+  if (x._ref_id) {
+    obj._ref_id = x._ref_id
+  }
 
   return obj
 }
@@ -114,6 +128,11 @@ export function translateToNewGQLCollection(x: any): HoppCollection {
   const headers = x.headers ?? []
   const variables = x.variables ?? []
 
+  const description = x.description ?? null
+
+  const preRequestScript = x.preRequestScript ?? ""
+  const testScript = x.testScript ?? ""
+
   const obj = makeCollection({
     name,
     folders,
@@ -121,10 +140,15 @@ export function translateToNewGQLCollection(x: any): HoppCollection {
     auth,
     headers,
     variables,
+    description,
+    preRequestScript,
+    testScript,
   })
 
   if (x.id) obj.id = x.id
-  if (x._ref_id) obj._ref_id = x._ref_id
+  if (x._ref_id) {
+    obj._ref_id = x._ref_id
+  }
 
   return obj
 }

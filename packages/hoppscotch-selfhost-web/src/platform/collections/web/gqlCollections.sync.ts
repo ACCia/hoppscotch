@@ -14,9 +14,12 @@ import {
   HoppRESTRequest,
 } from "@hoppscotch/data"
 
-import { getSyncInitFunction, type StoreSyncDefinitionOf } from "@lib/sync"
+import { stripSecretVariableValuesForWire } from "@hoppscotch/common/helpers/secretVariables"
 
-import { createMapper } from "@lib/sync/mapper"
+import { getSyncInitFunction, type StoreSyncDefinitionOf } from "@app/lib/sync"
+
+import { createMapper } from "@app/lib/sync/mapper"
+
 import {
   createGQLChildUserCollection,
   createGQLRootUserCollection,
@@ -30,7 +33,7 @@ import {
 } from "./api"
 
 import * as E from "fp-ts/Either"
-import { ReqType } from "@api/generated/graphql"
+import { ReqType } from "@app/api/generated/graphql"
 import { moveOrReorderRequests } from "./sync"
 
 // gqlCollectionsMapper uses the collectionPath as the local identifier
@@ -42,8 +45,11 @@ const transformCollectionForBackend = (collection: HoppCollection): any => {
       authActive: true,
     },
     headers: collection.headers ?? [],
-    variables: collection.variables ?? [],
+    variables: stripSecretVariableValuesForWire(collection.variables ?? []),
     _ref_id: collection._ref_id,
+    description: collection.description ?? null,
+    preRequestScript: collection.preRequestScript ?? "",
+    testScript: collection.testScript ?? "",
   }
 
   return {
@@ -76,8 +82,11 @@ const recursivelySyncCollections = async (
         authActive: true,
       },
       headers: collection.headers ?? [],
-      variables: collection.variables ?? [],
+      variables: stripSecretVariableValuesForWire(collection.variables ?? []),
       _ref_id: collection._ref_id,
+      description: collection.description ?? null,
+      preRequestScript: collection.preRequestScript ?? "",
+      testScript: collection.testScript ?? "",
     }
     const res = await createGQLRootUserCollection(
       collection.name,
@@ -97,6 +106,9 @@ const recursivelySyncCollections = async (
             headers: [],
             variables: [],
             _ref_id: generateUniqueRefId("coll"),
+            description: null,
+            preRequestScript: "",
+            testScript: "",
           }
 
       collection.id = parentCollectionID
@@ -104,6 +116,9 @@ const recursivelySyncCollections = async (
       collection.auth = returnedData.auth
       collection.headers = returnedData.headers
       collection.variables = returnedData.variables
+      collection.description = returnedData.description ?? null
+      collection.preRequestScript = returnedData.preRequestScript ?? ""
+      collection.testScript = returnedData.testScript ?? ""
 
       removeDuplicateGraphqlCollectionOrFolder(
         parentCollectionID,
@@ -121,8 +136,11 @@ const recursivelySyncCollections = async (
         authActive: true,
       },
       headers: collection.headers ?? [],
-      variables: collection.variables ?? [],
+      variables: stripSecretVariableValuesForWire(collection.variables ?? []),
       _ref_id: collection._ref_id,
+      description: collection.description ?? null,
+      preRequestScript: collection.preRequestScript ?? "",
+      testScript: collection.testScript ?? "",
     }
 
     const res = await createGQLChildUserCollection(
@@ -144,6 +162,9 @@ const recursivelySyncCollections = async (
             headers: [],
             variables: [],
             _ref_id: generateUniqueRefId("coll"),
+            description: null,
+            preRequestScript: "",
+            testScript: "",
           }
 
       collection.id = childCollectionId
@@ -152,6 +173,9 @@ const recursivelySyncCollections = async (
       collection.headers = returnedData.headers
       parentCollectionID = childCollectionId
       collection.variables = returnedData.variables
+      collection.description = returnedData.description ?? null
+      collection.preRequestScript = returnedData.preRequestScript ?? ""
+      collection.testScript = returnedData.testScript ?? ""
 
       removeDuplicateGraphqlCollectionOrFolder(
         childCollectionId,
@@ -265,8 +289,11 @@ export const storeSyncDefinition: StoreSyncDefinitionOf<
     const data = {
       auth: collection.auth,
       headers: collection.headers,
-      variables: collection.variables,
+      variables: stripSecretVariableValuesForWire(collection.variables ?? []),
       _ref_id: collection._ref_id,
+      description: collection.description ?? null,
+      preRequestScript: collection.preRequestScript ?? "",
+      testScript: collection.testScript ?? "",
     }
 
     if (collectionID) {
@@ -311,8 +338,11 @@ export const storeSyncDefinition: StoreSyncDefinitionOf<
     const data = {
       auth: folder.auth,
       headers: folder.headers,
-      variables: folder.variables,
+      variables: stripSecretVariableValuesForWire(folder.variables ?? []),
       _ref_id: folder._ref_id,
+      description: folder.description ?? null,
+      preRequestScript: folder.preRequestScript ?? "",
+      testScript: folder.testScript ?? "",
     }
 
     if (folderBackendId) {

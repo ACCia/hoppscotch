@@ -1,7 +1,17 @@
 import { onBeforeUnmount, onMounted } from "vue"
 import { HoppActionWithOptionalArgs, invokeAction } from "./actions"
+import {
+  getKeyboardLayoutStrategy,
+  type KeyboardLayoutStrategy,
+} from "./keyboard-strategy"
 import { isAppleDevice } from "./platformutils"
-import { isCodeMirrorEditor, isDOMElement, isTypableElement } from "./utils/dom"
+import {
+  isCodeMirrorEditor,
+  isDOMElement,
+  isInShortcutsFlyout,
+  isMonacoEditor,
+  isTypableElement,
+} from "./utils/dom"
 import { getKernelMode } from "@hoppscotch/kernel"
 import { listen } from "@tauri-apps/api/event"
 
@@ -37,7 +47,8 @@ type Key =
   | "k" | "l" | "m" | "n" | "o" | "p" | "q" | "r" | "s" | "t"
   | "u" | "v" | "w" | "x" | "y" | "z" | "0" | "1" | "2" | "3"
   | "4" | "5" | "6" | "7" | "8" | "9" | "up" | "down" | "left"
-  | "right" | "/" | "?" | "." | "enter" | "tab"
+  | "right" | "/" | "?" | "." | "enter" | "tab" | "delete" | "backspace"
+  | "[" | "]"
 /* eslint-enable */
 
 type ModifierBasedShortcutKey = `${ModifierKeys}-${Key}`
@@ -63,8 +74,9 @@ const baseBindings: {
   "alt-u": "request.method.put",
   "alt-x": "request.method.delete",
   "ctrl-k": "modals.search.toggle",
-  "ctrl-/": "flyouts.keybinds.toggle",
+  "ctrl-/": "editor.comment-toggle",
   "shift-/": "modals.support.toggle",
+  "ctrl-shift-/": "flyouts.keybinds.toggle",
   "ctrl-m": "modals.share.toggle",
   "alt-r": "navigation.jump.rest",
   "alt-q": "navigation.jump.graphql",
@@ -77,6 +89,17 @@ const baseBindings: {
   "ctrl-.": "response.copy",
   "ctrl-e": "response.save-as-example",
   "ctrl-shift-l": "editor.format",
+  "ctrl-z": "editor.undo",
+  "ctrl-y": "editor.redo",
+  "ctrl-delete": "response.erase",
+  "ctrl-backspace": "response.erase",
+}
+
+// Web-only bindings
+const webBindings: {
+  [_ in ShortcutKey]?: HoppActionWithOptionalArgs
+} = {
+  "ctrl-d": "tab.close-current",
 }
 
 // Desktop-only bindings
@@ -90,6 +113,9 @@ const desktopBindings: {
   "ctrl-alt-0": "tab.switch-to-last",
   "ctrl-alt-9": "tab.switch-to-first",
   "ctrl-q": "app.quit",
+  "ctrl-alt-u": "request.focus-url",
+  "ctrl-alt-]": "tab.mru-switch",
+  "ctrl-alt-[": "tab.mru-switch-reverse",
 }
 
 /**
@@ -105,7 +131,10 @@ function getActiveBindings(): typeof baseBindings {
     }
   }
 
-  return baseBindings
+  return {
+    ...baseBindings,
+    ...webBindings,
+  }
 }
 
 export const bindings = getActiveBindings()
@@ -117,7 +146,8 @@ export const bindings = getActiveBindings()
  */
 export function hookKeybindingsListener() {
   onMounted(async () => {
-    document.addEventListener("keydown", handleKeyDown)
+    // Use capture phase to intercept events before browser handles them
+    document.addEventListener("keydown", handleKeyDown, true)
 
     // Listen for Tauri events (desktop only)
     if (getKernelMode() === "desktop") {
@@ -136,7 +166,7 @@ export function hookKeybindingsListener() {
   })
 
   onBeforeUnmount(() => {
-    document.removeEventListener("keydown", handleKeyDown)
+    document.removeEventListener("keydown", handleKeyDown, true)
 
     if (unlistenTauriEvent) {
       unlistenTauriEvent()
@@ -149,11 +179,90 @@ function handleKeyDown(ev: KeyboardEvent) {
   // Do not check keybinds if the mode is disabled
   if (!keybindingsEnabled) return
 
+  // Skip during IME composition (CJK input). Modern browsers report
+  // `isComposing`. Older ones use the sentinel `keyCode === 229`.
+  // Either way the keystroke belongs to a composition, not a shortcut.
+  if (ev.isComposing || ev.keyCode === 229) return
+
+  // Skip when AltGr is the modifier. Browsers report AltGr as Ctrl+Alt
+  // on Windows, so QWERTZ users typing `[` via AltGr+8 would otherwise
+  // match Ctrl+Alt+[ (the MRU tab shortcut) and steal the keystroke.
+  // `getModifierState("AltGraph")` is true only for AltGr, not for
+  // genuine Ctrl+Alt presses.
+  if (ev.getModifierState("AltGraph")) return
+
   const binding = generateKeybindingString(ev)
   if (!binding) return
 
   const activeBindings = getActiveBindings()
   const boundAction = activeBindings[binding]
+
+  // Special handling for Ctrl+D (tab close for web browsers)
+  if (binding === "ctrl-d" && boundAction) {
+    ev.preventDefault()
+    ev.stopPropagation()
+    ev.stopImmediatePropagation()
+
+    if (boundAction) {
+      invokeAction(boundAction, undefined, "keypress")
+    }
+    return
+  }
+
+  // Special handling for undo/redo - let CodeMirror and Monaco handle these in editors
+  if (binding === "ctrl-z" || binding === "ctrl-y") {
+    const target = ev.target
+    if (
+      isDOMElement(target) &&
+      (isCodeMirrorEditor(target) ||
+        isMonacoEditor(target) ||
+        isTypableElement(target))
+    ) {
+      return
+    }
+  }
+
+  // Special handling for comment toggle - let CodeMirror and Monaco handle this in editors
+  if (binding === "ctrl-/") {
+    const target = ev.target
+
+    if (!isDOMElement(target)) return
+
+    // Let editors handle it normally
+    if (isCodeMirrorEditor(target) || isMonacoEditor(target)) return
+
+    // If inside shortcuts flyout, always toggle it (even if focused on search input)
+    // If not in editor or input, fall back to keybinds flyout
+    const shouldToggle =
+      isInShortcutsFlyout(target) || !isTypableElement(target)
+
+    if (shouldToggle) {
+      invokeAction("flyouts.keybinds.toggle", undefined, "keypress")
+      ev.preventDefault()
+      return
+    }
+
+    // If in a normal input field, let browser handle it
+    return
+  }
+
+  // Special handling for shift-/ (support menu) - don't trigger in editors or inputs
+  if (binding === "shift-/") {
+    const target = ev.target
+
+    if (!isDOMElement(target)) return
+
+    // Let editors and inputs handle it normally (user is just typing "/")
+    if (
+      isCodeMirrorEditor(target) ||
+      isMonacoEditor(target) ||
+      isTypableElement(target)
+    ) {
+      return
+    }
+  }
+
+  // If no action is bound, do nothing
   if (!boundAction) return
 
   ev.preventDefault()
@@ -185,20 +294,20 @@ function generateKeybindingString(ev: KeyboardEvent): ShortcutKey | null {
 
   // All key combos backed by modifiers are valid shortcuts (whether currently typing or not)
   if (modifierKey) {
-    // If the modifier is shift and the target is an input, we ignore
+    // If the modifier is shift and the target is an input or codemirror editor, we ignore
     if (
       modifierKey === "shift" &&
       isDOMElement(target) &&
-      isTypableElement(target)
+      (isTypableElement(target) || isCodeMirrorEditor(target))
     ) {
       return null
     }
 
-    // Restrict alt+up and alt+down when the target is a codemirror editor
+    // Restrict alt+up and alt+down when the target is a CodeMirror or Monaco editor
     if (
       modifierKey === "alt" &&
       (key === "up" || key === "down") &&
-      isCodeMirrorEditor(target)
+      (isCodeMirrorEditor(target) || isMonacoEditor(target))
     ) {
       return null
     }
@@ -214,29 +323,111 @@ function generateKeybindingString(ev: KeyboardEvent): ShortcutKey | null {
 }
 
 function getPressedKey(ev: KeyboardEvent): Key | null {
-  // Sometimes the property code is not available on the KeyboardEvent object
-  const key = (ev.key ?? "").toLowerCase()
+  return resolvePressedKey(ev, getKeyboardLayoutStrategy())
+}
 
-  // Check arrow keys
+// Minimal subset of `KeyboardEvent` so unit tests can construct fixtures
+// without a JSDOM event. `getModifierState` is optional because the only
+// call site (numpad detection) tolerates its absence.
+export type KeyboardEventLike = Pick<KeyboardEvent, "key" | "code"> & {
+  getModifierState?: KeyboardEvent["getModifierState"]
+}
+
+/**
+ * Resolves a keyboard event into the registered shortcut key, dispatching
+ * letter and digit lookups through the active layout strategy.
+ *
+ * Strategies only affect the letter and digit branches because those are
+ * the keys whose `event.key` and `event.code` diverge across layouts.
+ * Arrow keys, Tab, Enter, brackets, and the "?" → "/" mapping are layout
+ * stable, so the same checks apply regardless of strategy.
+ *
+ * `"key"` uses `event.key` (the typed character), which suits AZERTY,
+ * QWERTZ, and Dvorak users whose keycap labels match the shortcut they
+ * want to fire. `"code"` uses `event.code` (the physical key position),
+ * which suits Cyrillic and CJK users with US-QWERTY muscle memory.
+ * `"hybrid"` prefers `event.key` when it produces a Latin glyph and
+ * falls back to `event.code` otherwise, covering both populations.
+ *
+ * Both `getPressedKey` (the in-page handler entry) and the capture-phase
+ * listener in `selfhost-web/main.ts` call this with the active strategy
+ * from `getKeyboardLayoutStrategy`.
+ */
+export function resolvePressedKey(
+  ev: KeyboardEventLike,
+  strategy: KeyboardLayoutStrategy
+): Key | null {
+  const key = (ev.key ?? "").toLowerCase()
+  const code = ev.code ?? ""
+
+  // Letters
+  const letterFromKey =
+    key.length === 1 && key >= "a" && key <= "z" ? (key as Key) : null
+  const letterFromCode =
+    code.startsWith("Key") && code.length === 4
+      ? (code[3].toLowerCase() as Key)
+      : null
+  // The "code" branch falls back to event.key when event.code is empty
+  // (synthetic events, certain older environments) so a Latin-letter
+  // shortcut still resolves rather than silently dropping. Matches the
+  // pre-strategy resolver's contract.
+  const letter =
+    strategy === "key"
+      ? letterFromKey
+      : strategy === "code"
+        ? (letterFromCode ?? (!code ? letterFromKey : null))
+        : (letterFromKey ?? letterFromCode)
+  if (letter) return letter
+
+  // Arrow keys (ArrowUp → up, etc)
   if (key.startsWith("arrow")) {
     return key.slice(5) as Key
   }
 
-  // Check for Tab key
   if (key === "tab") return "tab"
+  if (key === "delete") return "delete"
+  if (key === "backspace") return "backspace"
 
-  // Check letter keys
-  const isLetter = key.length === 1 && key >= "a" && key <= "z"
-  if (isLetter) return key as Key
+  // Shift+/ produces "?" on most layouts but the shortcut is registered as "/"
+  if (key === "?") return "/"
 
-  // Check if number keys
-  const isDigit = key.length === 1 && key >= "0" && key <= "9"
-  if (isDigit) return key as Key
-
-  // Check if slash, period or enter
+  // Punctuation checked before digit codes because some layouts produce
+  // these characters from physical digit keys (e.g. AZERTY produces [
+  // via AltGr+5 which has code "Digit5").
   if (key === "/" || key === "." || key === "enter") return key
+  if (key === "[" || key === "]") return key
 
-  // If no other cases match, this is not a valid key
+  // Bracket fallback for non-Latin layouts where the physical bracket
+  // keys don't type [/] (e.g. Russian Cyrillic where KeyBracketLeft
+  // types "х"). The shortcut is registered as ctrl-alt-[ so users
+  // pressing the keycap labelled [ still fire it regardless of layout.
+  if (code === "BracketLeft") return "["
+  if (code === "BracketRight") return "]"
+
+  // Digits
+  const digitFromKey =
+    key.length === 1 && key >= "0" && key <= "9" ? (key as Key) : null
+  const digitFromCode =
+    code.startsWith("Digit") && code.length === 6 ? (code[5] as Key) : null
+  const digit =
+    strategy === "key"
+      ? digitFromKey
+      : strategy === "code"
+        ? digitFromCode
+        : (digitFromKey ?? digitFromCode)
+  if (digit) return digit
+
+  // Numpad digits (Numpad0–Numpad9), only when NumLock is on.
+  // When NumLock is off the physical keys act as navigation (Home, End, etc)
+  // but event.code still returns Numpad0-Numpad9.
+  if (
+    code.startsWith("Numpad") &&
+    code.length === 7 &&
+    ev.getModifierState?.("NumLock")
+  ) {
+    return code.slice(6) as Key
+  }
+
   return null
 }
 

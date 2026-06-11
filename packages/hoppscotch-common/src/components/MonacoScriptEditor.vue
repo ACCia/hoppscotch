@@ -16,18 +16,21 @@ import { v4 as uuidv4 } from "uuid"
 import { computed, onMounted, onUnmounted, ref } from "vue"
 
 import { useColorMode } from "~/composables/theming"
+import { MODULE_PREFIX } from "@hoppscotch/js-sandbox/scripting"
 
 // Import type definitions as raw strings
-import preRequestTypes from "~/types/pre-request.d.ts?raw"
 import postRequestTypes from "~/types/post-request.d.ts?raw"
+import preRequestTypes from "~/types/pre-request.d.ts?raw"
 
 const props = withDefaults(
   defineProps<{
     modelValue: string
     type: "pre-request" | "post-request"
+    readOnly?: boolean
   }>(),
   {
     modelValue: "",
+    readOnly: false,
   }
 )
 
@@ -39,12 +42,15 @@ const emit = defineEmits<{
 
 const editorModel = ref<monaco.editor.ITextModel | null>(null)
 
-const MONACO_EDITOR_OPTIONS: Readonly<monaco.editor.IStandaloneEditorConstructionOptions> =
-  {
-    automaticLayout: true,
-    formatOnType: true,
-    formatOnPaste: true,
-  }
+const MONACO_EDITOR_OPTIONS = computed<
+  Readonly<monaco.editor.IStandaloneEditorConstructionOptions>
+>(() => ({
+  automaticLayout: true,
+  formatOnType: !props.readOnly,
+  formatOnPaste: !props.readOnly,
+  readOnly: props.readOnly,
+  domReadOnly: props.readOnly,
+}))
 
 // Static imports: import X from "URL"
 const staticImportRegex =
@@ -59,8 +65,6 @@ const extraLibRefs = new Map<string, monaco.IDisposable>()
 
 // Track context-specific type definition for this editor instance
 const contextTypeDefRef = ref<monaco.IDisposable | null>(null)
-
-const MODULE_PREFIX = "export {};\n" as const
 
 const ensureCompilerOptions = (() => {
   let applied = false
@@ -78,19 +82,32 @@ const ensureCompilerOptions = (() => {
       moduleResolution: monaco.languages.typescript.ModuleResolutionKind.NodeJs,
       module: monaco.languages.typescript.ModuleKind.ESNext,
       noEmit: true,
-      target: monaco.languages.typescript.ScriptTarget.ES2020,
+      // Target set to ES2022 to support modern JavaScript features used in scripts
+      // (e.g., top-level await, class fields, improved error handling)
+      target: monaco.languages.typescript.ScriptTarget.ES2022,
       allowNonTsExtensions: true,
+      // Enable top-level await support with proper lib configuration
+      // dom.iterable is required for DOM collection iterators (Headers.entries(), etc.)
+      lib: ["es2022", "es2022.promise", "dom", "dom.iterable"],
     })
 
     monaco.languages.typescript.typescriptDefaults.setDiagnosticsOptions({
       noSemanticValidation: false,
       noSyntaxValidation: false,
+      // Disable specific error codes that interfere with top-level await in module context
+      diagnosticCodesToIgnore: [1375, 1378], // Top-level await errors
     })
 
     // Disable Cmd/Ctrl+Enter key binding
     monaco.editor.addKeybindingRule({
       keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.Enter,
       command: null,
+    })
+
+    // Add Cmd+Y redo keybinding for Monaco
+    monaco.editor.addKeybindingRule({
+      keybinding: monaco.KeyMod.CtrlCmd | monaco.KeyCode.KeyY,
+      command: "redo",
     })
 
     applied = true
@@ -129,6 +146,8 @@ onMounted(() => {
 })
 
 onUnmounted(() => {
+  editorModel.value?.dispose()
+
   // Clean up context-specific type definitions for this editor instance
   contextTypeDefRef.value?.dispose()
 
@@ -223,3 +242,27 @@ const monacoEditorTheme = computed(() =>
   ["dark", "black"].includes(theme.value) ? "vs-dark" : "vs"
 )
 </script>
+
+<style scoped lang="scss">
+/* Override Monaco editor colors with Hoppscotch CSS variables
+   to keep visual consistency with the CodeMirror editors.
+   :deep() penetrates into Monaco's rendered DOM within this component. */
+:deep(.monaco-editor),
+:deep(.monaco-editor .overflow-guard),
+:deep(.monaco-editor-background),
+:deep(.monaco-editor .margin) {
+  background-color: var(--primary-color) !important;
+}
+
+:deep(.monaco-editor .line-numbers) {
+  color: var(--secondary-light-color) !important;
+}
+
+:deep(.monaco-editor .cursor) {
+  border-color: var(--secondary-color) !important;
+}
+
+:deep(.monaco-editor .selected-text) {
+  background-color: var(--accent-dark-color) !important;
+}
+</style>

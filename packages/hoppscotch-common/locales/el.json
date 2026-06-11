@@ -112,6 +112,7 @@
     "continue_with_github_enterprise": "Continue with GitHub Enterprise",
     "continue_with_google": "Συνεχίστε με την Google",
     "continue_with_microsoft": "Συνεχίστε με την Microsoft",
+    "continue_with_oidc": "Συνεχίστε με το OIDC",
     "email": "ΗΛΕΚΤΡΟΝΙΚΗ ΔΙΕΥΘΥΝΣΗ",
     "logged_out": "Αποσυνδέθηκα",
     "login": "Σύνδεση",
@@ -623,7 +624,7 @@
   "response": {
     "audio": "Audio",
     "body": "Σώμα απόκρισης",
-    "filter_response_body": "Filter JSON response body (uses JSONPath syntax)",
+    "filter_response_body": "Filter JSON response body (uses jq syntax)",
     "headers": "Κεφαλίδες",
     "html": "HTML",
     "image": "Εικόνα",

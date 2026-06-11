@@ -112,6 +112,7 @@
     "continue_with_github_enterprise": "Continue with GitHub Enterprise",
     "continue_with_google": "Продовжити з Google",
     "continue_with_microsoft": "Продовжити з Microsoft",
+    "continue_with_oidc": "Продовжити з OIDC",
     "email": "Електронна пошта",
     "logged_out": "Ви вийшли з облікового запису",
     "login": "Увійти",
@@ -623,7 +624,7 @@
   "response": {
     "audio": "Audio",
     "body": "Орган реагування",
-    "filter_response_body": "Фільтр тіла відповідей JSON (використовує синтаксис JSONPath)",
+    "filter_response_body": "Фільтр тіла відповідей JSON (використовує синтаксис jq)",
     "headers": "Заголовки",
     "html": "HTML",
     "image": "Зображення",

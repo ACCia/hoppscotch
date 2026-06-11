@@ -2,19 +2,46 @@ import { AuthProvider } from 'src/auth/helper';
 import { ENV_INVALID_DATA_ENCRYPTION_KEY } from 'src/errors';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { InfraConfigEnum } from 'src/types/InfraConfig';
+import { SMTPAuthType } from 'src/mailer/helper';
 import { decrypt, encrypt } from 'src/utils';
 import { randomBytes } from 'crypto';
+import { InfraConfig } from 'src/generated/prisma/client';
 
 export enum ServiceStatus {
   ENABLE = 'ENABLE',
   DISABLE = 'DISABLE',
 }
 
+const SYNC_ONLY_VARIABLES = [InfraConfigEnum.PROXY_APP_URL];
+
 type DefaultInfraConfig = {
   name: InfraConfigEnum;
   value: string;
   isEncrypted: boolean;
 };
+
+// Singleton PrismaService instance for infra config operations
+let sharedPrismaInstance: PrismaService | null = null;
+
+/**
+ * Get or create a shared PrismaService instance for infra config operations
+ */
+function getSharedPrismaInstance(): PrismaService {
+  if (!sharedPrismaInstance) {
+    sharedPrismaInstance = new PrismaService();
+  }
+  return sharedPrismaInstance;
+}
+
+/**
+ * Disconnect the shared Prisma instance during application shutdown
+ */
+export async function disconnectSharedPrismaInstance(): Promise<void> {
+  if (sharedPrismaInstance) {
+    await sharedPrismaInstance.onModuleDestroy();
+    sharedPrismaInstance = null;
+  }
+}
 
 /**
  * Returns a mapping of authentication providers to their required configuration keys based on the current environment configuration.
@@ -42,14 +69,22 @@ export function getAuthProviderRequiredKeys(
       InfraConfigEnum.MICROSOFT_SCOPE,
       InfraConfigEnum.MICROSOFT_TENANT,
     ],
+    [AuthProvider.OIDC]: [
+      InfraConfigEnum.OIDC_CLIENT_ID,
+      InfraConfigEnum.OIDC_CLIENT_SECRET,
+      InfraConfigEnum.OIDC_CALLBACK_URL,
+      InfraConfigEnum.OIDC_SCOPE,
+      InfraConfigEnum.OIDC_ISSUER,
+      InfraConfigEnum.OIDC_AUTH_URL,
+      InfraConfigEnum.OIDC_TOKEN_URL,
+      InfraConfigEnum.OIDC_USERINFO_URL,
+    ],
     [AuthProvider.EMAIL]:
       env['INFRA'].MAILER_USE_CUSTOM_CONFIGS === 'true'
         ? [
             InfraConfigEnum.MAILER_SMTP_HOST,
             InfraConfigEnum.MAILER_SMTP_PORT,
             InfraConfigEnum.MAILER_SMTP_SECURE,
-            InfraConfigEnum.MAILER_SMTP_USER,
-            InfraConfigEnum.MAILER_SMTP_PASSWORD,
             InfraConfigEnum.MAILER_TLS_REJECT_UNAUTHORIZED,
             InfraConfigEnum.MAILER_ADDRESS_FROM,
           ]
@@ -67,8 +102,8 @@ export function getAuthProviderRequiredKeys(
  * (ConfigModule will set the environment variables in the process)
  */
 export async function loadInfraConfiguration() {
+  const prisma = getSharedPrismaInstance();
   try {
-    const prisma = new PrismaService();
     const infraConfigs = await prisma.infraConfig.findMany();
 
     const environmentObject: Record<string, string> = {};
@@ -97,7 +132,7 @@ export async function loadInfraConfiguration() {
  * @returns Array of default infra configs
  */
 export async function getDefaultInfraConfigs(): Promise<DefaultInfraConfig[]> {
-  const prisma = new PrismaService();
+  const prisma = getSharedPrismaInstance();
 
   // Prepare rows for 'infra_config' table with default values (from .env) for each 'name'
   const onboardingCompleteStatus = await isOnboardingCompleted();
@@ -218,6 +253,41 @@ export async function getDefaultInfraConfigs(): Promise<DefaultInfraConfig[]> {
       isEncrypted: false,
     },
     {
+      name: InfraConfigEnum.MAILER_SMTP_IGNORE_TLS,
+      value: 'false',
+      isEncrypted: false,
+    },
+    {
+      name: InfraConfigEnum.MAILER_SMTP_AUTH_TYPE,
+      value: SMTPAuthType.LOGIN,
+      isEncrypted: false,
+    },
+    {
+      name: InfraConfigEnum.MAILER_SMTP_OAUTH2_USER,
+      value: null,
+      isEncrypted: false,
+    },
+    {
+      name: InfraConfigEnum.MAILER_SMTP_OAUTH2_CLIENT_ID,
+      value: null,
+      isEncrypted: true,
+    },
+    {
+      name: InfraConfigEnum.MAILER_SMTP_OAUTH2_CLIENT_SECRET,
+      value: null,
+      isEncrypted: true,
+    },
+    {
+      name: InfraConfigEnum.MAILER_SMTP_OAUTH2_REFRESH_TOKEN,
+      value: null,
+      isEncrypted: true,
+    },
+    {
+      name: InfraConfigEnum.MAILER_SMTP_OAUTH2_ACCESS_URL,
+      value: null,
+      isEncrypted: false,
+    },
+    {
       name: InfraConfigEnum.GOOGLE_CLIENT_ID,
       value: null,
       isEncrypted: true,
@@ -283,8 +353,53 @@ export async function getDefaultInfraConfigs(): Promise<DefaultInfraConfig[]> {
       isEncrypted: false,
     },
     {
+      name: InfraConfigEnum.OIDC_CLIENT_ID,
+      value: encrypt(process.env.OIDC_CLIENT_ID),
+      isEncrypted: true,
+    },
+    {
+      name: InfraConfigEnum.OIDC_CLIENT_SECRET,
+      value: encrypt(process.env.OIDC_CLIENT_SECRET),
+      isEncrypted: true,
+    },
+    {
+      name: InfraConfigEnum.OIDC_CALLBACK_URL,
+      value: process.env.OIDC_CALLBACK_URL,
+      isEncrypted: false,
+    },
+    {
+      name: InfraConfigEnum.OIDC_SCOPE,
+      value: process.env.OIDC_SCOPE,
+      isEncrypted: false,
+    },
+    {
+      name: InfraConfigEnum.OIDC_ISSUER,
+      value: process.env.OIDC_ISSUER,
+      isEncrypted: false,
+    },
+    {
+      name: InfraConfigEnum.OIDC_AUTH_URL,
+      value: process.env.OIDC_AUTH_URL,
+      isEncrypted: false,
+    },
+    {
+      name: InfraConfigEnum.OIDC_TOKEN_URL,
+      value: process.env.OIDC_TOKEN_URL,
+      isEncrypted: false,
+    },
+    {
+      name: InfraConfigEnum.OIDC_USERINFO_URL,
+      value: process.env.OIDC_USERINFO_URL,
+      isEncrypted: false,
+    },
+    {
       name: InfraConfigEnum.VITE_ALLOWED_AUTH_PROVIDERS,
       value: null,
+      isEncrypted: false,
+    },
+    {
+      name: InfraConfigEnum.PROXY_APP_URL,
+      value: process.env.PROXY_APP_URL || 'https://proxy.hoppscotch.io',
       isEncrypted: false,
     },
     {
@@ -324,7 +439,7 @@ export async function getDefaultInfraConfigs(): Promise<DefaultInfraConfig[]> {
 export async function getMissingInfraConfigEntries(
   infraConfigDefaultObjs: DefaultInfraConfig[],
 ) {
-  const prisma = new PrismaService();
+  const prisma = getSharedPrismaInstance();
   const dbInfraConfigs = await prisma.infraConfig.findMany();
 
   const missingEntries = infraConfigDefaultObjs.filter(
@@ -342,7 +457,7 @@ export async function getMissingInfraConfigEntries(
 export async function getEncryptionRequiredInfraConfigEntries(
   infraConfigDefaultObjs: DefaultInfraConfig[],
 ) {
-  const prisma = new PrismaService();
+  const prisma = getSharedPrismaInstance();
   const dbInfraConfigs = await prisma.infraConfig.findMany();
 
   const requiredEncryption = dbInfraConfigs.filter((dbConfig) => {
@@ -354,6 +469,54 @@ export async function getEncryptionRequiredInfraConfigEntries(
   });
 
   return requiredEncryption;
+}
+
+/**
+ * Sync the 'infra_config' table with .env file
+ * @returns Array of InfraConfig
+ */
+export async function syncInfraConfigWithEnvFile() {
+  const prisma = getSharedPrismaInstance();
+  const dbInfraConfigs = await prisma.infraConfig.findMany({
+    where: { name: { in: SYNC_ONLY_VARIABLES } },
+  });
+
+  const updateRequiredObjs: (Partial<InfraConfig> & { id: string })[] = [];
+
+  for (const dbConfig of dbInfraConfigs) {
+    const envValue = process.env[dbConfig.name];
+
+    // If the env var is unset, leave the admin-set DB value alone. Otherwise
+    // an admin's later override would be wiped on every restart.
+    if (envValue === undefined) continue;
+
+    // lastSyncedEnvFileValue null check for backward compatibility from 2024.10.2 and below
+    if (!dbConfig.lastSyncedEnvFileValue) {
+      const configValue = dbConfig.isEncrypted ? encrypt(envValue) : envValue;
+      updateRequiredObjs.push({
+        id: dbConfig.id,
+        value: dbConfig.value === null ? configValue : undefined,
+        lastSyncedEnvFileValue: configValue,
+      });
+      continue;
+    }
+
+    // If the value in the database is different from the value in the .env file, means the value in the .env file has been updated
+    const rawLastSyncedEnvFileValue = dbConfig.isEncrypted
+      ? decrypt(dbConfig.lastSyncedEnvFileValue)
+      : dbConfig.lastSyncedEnvFileValue;
+
+    if (rawLastSyncedEnvFileValue !== envValue) {
+      const configValue = dbConfig.isEncrypted ? encrypt(envValue) : envValue;
+      updateRequiredObjs.push({
+        id: dbConfig.id,
+        value: configValue,
+        lastSyncedEnvFileValue: configValue,
+      });
+    }
+  }
+
+  return updateRequiredObjs;
 }
 
 /**
@@ -400,7 +563,7 @@ export function stopApp() {
  * @returns Array of configured SSO providers
  */
 export async function getConfiguredSSOProvidersFromInfraConfig() {
-  const prisma = new PrismaService();
+  const prisma = getSharedPrismaInstance();
   const env = await loadInfraConfiguration();
   const providerConfigKeys = getAuthProviderRequiredKeys(env);
 
@@ -437,7 +600,7 @@ export async function getConfiguredSSOProvidersFromInfraConfig() {
  * @returns boolean
  */
 export async function isOnboardingCompleted(): Promise<boolean> {
-  const prisma = new PrismaService();
+  const prisma = getSharedPrismaInstance();
   const allowedProviders = await prisma.infraConfig.findUnique({
     where: { name: InfraConfigEnum.VITE_ALLOWED_AUTH_PROVIDERS },
     select: { value: true },
